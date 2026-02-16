@@ -37,8 +37,8 @@ void ULandmarkCloudComponent::AddLandmarkPoint()
 	NewPoint.DisplayName = FText::FromString("New Landmark");
 	NewPoint.WorldLocation = GetComponentLocation(); // Add at Actor/Component location
     NewPoint.VisualConfig.BaseScale = 1.0f;
-    NewPoint.VisualConfig.MinVisibleZoom = 0.0f;
-    NewPoint.VisualConfig.MaxVisibleZoom = 1.0f;
+    NewPoint.VisualConfig.MinVisibleHeight = 0.0f;
+    NewPoint.VisualConfig.MaxVisibleHeight = 100000.0f;
 	
 	Landmarks.Add(NewPoint);
     

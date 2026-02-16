@@ -28,16 +28,20 @@ struct FLandmarkVisualConfig
 {
     GENERATED_BODY()
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    float BaseScale = 1.0f;
+ 	/* Minimum Camera Height (Z) at which this landmark is visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visibility")
+	float MinVisibleHeight = 0.0f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    float MinVisibleZoom = 0.0f; // 0.0 = Ground, 1.0 = Space
+	/* Maximum Camera Height (Z) at which this landmark is visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visibility")
+	float MaxVisibleHeight = 100000.0f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    float MaxVisibleZoom = 1.0f;
+	/* Base Scale of the text/icon. (Constant, does not change with zoom) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visibility")
+	float BaseScale = 1.0f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    /* Text Color */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visibility")
     FLinearColor Color = FLinearColor::White;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)

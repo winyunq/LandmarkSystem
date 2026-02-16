@@ -131,46 +131,30 @@ void ULandmarkSubsystem::UpdateCameraState(const FVector& CameraLocation, const 
 {
 	LastCameraLoc = CameraLocation;
 	LastCameraRot = CameraRotation;
-	LastZoomFactor = FMath::Clamp(ZoomFactor, 0.0f, 1.0f);
+    // ZoomFactor input is now less relevant for logic, but maybe useful for something else.
+    // We primarily use CameraLocation.Z for "Level" logic.
 
 	VisibleLandmarkIDs.Reset();
 	CachedScreenPositions.Reset();
 	CachedScales.Reset();
 	CachedAlphas.Reset();
 
-	// Adaptive Scaling Logic
-	// Logic: Use curves to determine global scale multiplier based on zoom
-	// TODO: Use the curves properly if they have data, otherwise fallback
-	float GlobalScaleMult = FMath::Lerp(0.5f, 2.0f, ZoomFactor); // Fallback Linear
-	float GlobalAlpha = FMath::Lerp(0.0f, 1.0f, ZoomFactor * 5.0f); // Fast fade in at start
-	GlobalAlpha = FMath::Clamp(GlobalAlpha, 0.0f, 1.0f);
+    // Standard Height-based filtering
+    float CameraHeight = CameraLocation.Z;
 
-	if (const FRichCurve* ScaleKeys = ScaleCurve.GetRichCurveConst())
-	{
-		if (ScaleKeys->GetNumKeys() > 0)
-		{
-			GlobalScaleMult = ScaleKeys->Eval(ZoomFactor);
-		}
-	}
-	if (const FRichCurve* AlphaKeys = AlphaCurve.GetRichCurveConst())
-	{
-		if (AlphaKeys->GetNumKeys() > 0)
-		{
-			GlobalAlpha = AlphaKeys->Eval(ZoomFactor);
-		}
-	}
-
-	// Frustum Culling & Projection
-	// Note: Standard ProjectWorldLocationToScreen requires a PlayerController. 
-	// For pure math without PC dependency, we'd need ViewProjectionMatrix.
-	// But usually Subsystems run in context where PC is available.
+	// Optimization: 
+    // Current implementation is O(N). For 65k map size, a QuadTree would be better.
+    // But for <2000 landmarks, O(N) is negligible in C++.
+    // 1. Frustum Culling (Project)
+    // 2. Height Filtering
 	
 	for (const auto& Pair : RegisteredLandmarks)
 	{
 		const FLandmarkInstanceData& Data = Pair.Value;
 
-		// 1. Zoom Level Filtering
-		if (ZoomFactor < Data.VisualConfig.MinVisibleZoom || ZoomFactor > Data.VisualConfig.MaxVisibleZoom)
+		// 1. Height Level Filtering
+        // "Level 1" = High Altitude, "Level 2" = Low Altitude
+		if (CameraHeight < Data.VisualConfig.MinVisibleHeight || CameraHeight > Data.VisualConfig.MaxVisibleHeight)
 		{
 			continue;
 		}
@@ -182,7 +166,7 @@ void ULandmarkSubsystem::UpdateCameraState(const FVector& CameraLocation, const 
 			Location = Data.LinkedActor->GetActorLocation();
 		}
 
-		// 3. Projection
+		// 3. Projection (Frustum Check)
 		FVector2D ScreenPos;
 		bool bOnScreen = ProjectWorldLocationToScreen(Location, ScreenPos);
 
@@ -191,11 +175,11 @@ void ULandmarkSubsystem::UpdateCameraState(const FVector& CameraLocation, const 
 			VisibleLandmarkIDs.Add(Data.ID);
 			CachedScreenPositions.Add(ScreenPos);
 			
-			// Per-landmark scale * Global Adaptive scale
-			float FinalScale = Data.VisualConfig.BaseScale * GlobalScaleMult;
-			CachedScales.Add(FinalScale);
+			// Constant Scale as requested
+			CachedScales.Add(Data.VisualConfig.BaseScale);
 			
-			CachedAlphas.Add(GlobalAlpha);
+            // Constant Alpha for now, or fade out at edges? Keep simple.
+			CachedAlphas.Add(1.0f);
 		}
 	}
 }
