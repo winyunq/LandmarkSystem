@@ -12,8 +12,6 @@ ULandmarkComponent::ULandmarkComponent()
     MinVisibleHeight = 0.0f;
     MaxVisibleHeight = 100000.0f;
     
-    // Default config
-    VisualConfig.BaseScale = 1.0f;
 }
 
 void ULandmarkComponent::OnRegister()
@@ -113,8 +111,8 @@ void ULandmarkComponent::UpdateEditorVisuals()
         if (TextToDisplay.IsEmpty()) TextToDisplay = ID.IsEmpty() ? TEXT("Landmark") : ID;
         
         TextComponent->SetText(FText::FromString(TextToDisplay));
-        TextComponent->SetTextRenderColor(VisualConfig.Color.ToFColor(true));
-        TextComponent->SetWorldSize(100.0f * VisualConfig.BaseScale);
+        TextComponent->SetTextRenderColor(FColor::White); // Default
+        TextComponent->SetWorldSize(100.0f); // Default
     }
 }
 #endif
