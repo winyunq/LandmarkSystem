@@ -3,6 +3,8 @@
 #include "Modules/ModuleManager.h"
 #include "EditorViewportClient.h"
 #include "SceneManagement.h"
+#include "UnrealEdGlobals.h" // For GUnrealEd
+#include "Editor/UnrealEdEngine.h"
 
 #define LOCTEXT_NAMESPACE "LandmarkCloudVisualizer"
 
@@ -21,6 +23,10 @@ void FLandmarkCloudVisualizer::DrawVisualization(const UActorComponent* Componen
 {
     const ULandmarkCloudComponent* CloudComp = Cast<ULandmarkCloudComponent>(Component);
     if (!CloudComp) return;
+
+    // Standard way to get properties?
+    // Usually we don't use ComponentPropertyPath here unless we stored it.
+
 
     const FTransform& CompTransform = CloudComp->GetComponentTransform();
     const TArray<FLandmarkInstanceData>& Points = CloudComp->Landmarks;

@@ -12,29 +12,8 @@ ULandmarkCloudComponent::ULandmarkCloudComponent()
 void ULandmarkCloudComponent::BeginPlay()
 {
 	Super::BeginPlay();
-
-    // Runtime Logic:
-    // 1. Tell Subsystem to load the file associated with this component
-    if (ULandmarkSubsystem* Subsystem = GetWorld()->GetSubsystem<ULandmarkSubsystem>())
-    {
-        if (!JsonFileName.IsEmpty())
-        {
-            Subsystem->LoadLandmarksFromFile(JsonFileName);
-        }
-        else if (Landmarks.Num() > 0)
-        {
-            // Fallback: If no file specified but we have legacy data in array, register it
-            // (Only for quick debug, normally usage uses JSON)
-            for (const FLandmarkInstanceData& Data : Landmarks)
-            {
-                Subsystem->RegisterLandmark(Data);
-            }
-        }
-    }
-
-    // 2. Zero Overhead Optimization
-    // We have handed off the instructions (or data). Now we die.
-    DestroyComponent();
+    // No Runtime Logic. This component is an Editor-Only tool.
+    // The Subsystem auto-loads landmarks based on map name.
 }
 
 void ULandmarkCloudComponent::ImportLandmarks(const TArray<FLandmarkInstanceData>& InLandmarks, bool bAppend)
@@ -81,13 +60,21 @@ void ULandmarkCloudComponent::LoadFromJson()
 void ULandmarkCloudComponent::SaveToJson()
 {
     FString RelativePath = FPaths::ProjectContentDir() / TEXT("MapData") / JsonFileName;
-    FString JsonString;
     
-    if (FJsonObjectConverter::UStructArrayToJsonString(Landmarks, JsonString))
+    // Manual serialization relying on Subsystem or duplicating logic? 
+    // Let's duplicate or make static helper. Given compilation error, just fix locally.
+    
+    TArray<TSharedPtr<FJsonValue>> JsonArray;
+    if (FJsonObjectConverter::UStructArrayToJson(Landmarks, JsonArray))
     {
-        if (FFileHelper::SaveStringToFile(JsonString, *RelativePath))
+        FString JsonString;
+        TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
+        if (FJsonSerializer::Serialize(JsonArray, Writer))
         {
-            UE_LOG(LogTemp, Log, TEXT("LandmarkCloud: Saved %d points to %s"), Landmarks.Num(), *RelativePath);
+            if (FFileHelper::SaveStringToFile(JsonString, *RelativePath))
+            {
+                UE_LOG(LogTemp, Log, TEXT("LandmarkCloud: Saved %d points to %s"), Landmarks.Num(), *RelativePath);
+            }
         }
     }
 }

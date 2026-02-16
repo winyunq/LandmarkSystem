@@ -23,6 +23,8 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
+    void OnWorldBeginPlay(UWorld* World);
+
 	// --- Registration API ---
 
 	/** Register a new landmark. Returns a generated ID if input ID is empty */

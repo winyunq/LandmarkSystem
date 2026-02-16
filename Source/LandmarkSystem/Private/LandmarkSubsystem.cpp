@@ -10,10 +10,30 @@ void ULandmarkSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	
-	// Default Curve Setup:
-	// Zoom 0.0 (Close): Scale 0.5, Alpha 0.0 (Hide)
-	// Zoom 0.5 (Mid): Scale 1.0, Alpha 1.0
-	// Zoom 1.0 (Far): Scale 2.0, Alpha 1.0
+    // Auto-Load Data for this Map
+    // We bind to OnWorldBeginPlay to ensure map name is ready and world is valid
+    FWorldDelegates::OnWorldBeginPlay.AddUObject(this, &ULandmarkSubsystem::OnWorldBeginPlay);
+}
+
+void ULandmarkSubsystem::OnWorldBeginPlay(UWorld* World)
+{
+    // Ensure we only load for our world
+    if (World == GetWorld())
+    {
+        // Construct filename: "Landmarks_MapName.json"
+        // GetMapName() returns "IED_MapName" or just "MapName". Be careful with PIE prefixes.
+        FString MapName = World->GetName();
+        
+        // Remove PIE prefix if needed (UEDPIE_0_...)
+        MapName.RemoveFromStart(World->StreamingLevelsPrefix); // Often handles the PIE prefix? 
+        // Or simpler: FPaths::GetBaseFilename(World->GetMapName());
+        
+        // For simplicity, let's look for "Landmarks_<MapName>.json"
+        FString FileName = FString::Printf(TEXT("Landmarks_%s.json"), *MapName);
+        
+        // Try load
+        LoadLandmarksFromFile(FileName);
+    }
 }
 
 void ULandmarkSubsystem::Deinitialize()
@@ -83,14 +103,19 @@ bool ULandmarkSubsystem::LoadLandmarksFromFile(const FString& FileName)
 bool ULandmarkSubsystem::SaveLandmarksToFile(const FString& FileName, const TArray<FLandmarkInstanceData>& DataToSave)
 {
     FString RelativePath = FPaths::ProjectContentDir() / TEXT("MapData") / FileName;
-    FString JsonString;
     
-    if (FJsonObjectConverter::UStructArrayToJsonString(DataToSave, JsonString))
+    TArray<TSharedPtr<FJsonValue>> JsonArray;
+    if (FJsonObjectConverter::UStructArrayToJson(DataToSave, JsonArray))
     {
-        if (FFileHelper::SaveStringToFile(JsonString, *RelativePath))
+        FString JsonString;
+        TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
+        if (FJsonSerializer::Serialize(JsonArray, Writer))
         {
-            UE_LOG(LogTemp, Log, TEXT("LandmarkSubsystem: Saved %d landmarks to %s"), DataToSave.Num(), *RelativePath);
-            return true;
+            if (FFileHelper::SaveStringToFile(JsonString, *RelativePath))
+            {
+                UE_LOG(LogTemp, Log, TEXT("LandmarkSubsystem: Saved %d landmarks to %s"), DataToSave.Num(), *RelativePath);
+                return true;
+            }
         }
     }
     
