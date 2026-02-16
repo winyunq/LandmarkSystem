@@ -92,6 +92,15 @@ bool ULandmarkSubsystem::LoadLandmarksFromFile(const FString& FileName)
                 FLandmarkInstanceData Data;
                 FJsonObjectConverter::JsonObjectToUStruct((*ObjectPtr).ToSharedRef(), &Data);
                 
+                // Coordinate System Fix:
+                // JSON Data (GIS/Screen): X=Right(East), Y=Up(North)
+                // Unreal Engine: X=Forward(North), Y=Right(East)
+                // Mapping: UE.X = Json.Y, UE.Y = Json.X
+                double JsonX = Data.X;
+                double JsonY = Data.Y;
+                Data.X = JsonY; 
+                Data.Y = JsonX; 
+                
                 // Fallback ID
                 if (Data.ID.IsEmpty()) Data.ID = FGuid::NewGuid().ToString();
                 
