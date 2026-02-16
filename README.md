@@ -2,6 +2,29 @@
 
 **LandmarkSystem** is a high-performance, LOD-aware map labeling system designed for RTS and Grand Strategy games in Unreal Engine 5. It solves the specific challenge of displaying readable map labels (Cities, Rivers, Mountains) across massive zoom ranges, implementing "Counter-intuitive Scaling" effectively.
 
+## How to Use
+
+### 1. Editing Landmarks (Editor)
+
+1.  **Place Actor**: Drag and drop a **`LandmarkCloudActor`** into your level.
+2.  **Configure**: In the Details panel, find the **"Landmark IO"** category.
+    *   Set **`JsonFileName`** to a unique name for this level, e.g., `Landmarks_LevelName.json`.
+    *   *Note: Files are saved to `Content/MapData/`.*
+3.  **Edit Points**:
+    *   Select the **`LandmarkCloudComponent`** (or just click the Actor).
+    *   **Click** on the component visualizer in the viewport to select points (if any).
+    *   **Add Points**: Currently, points are added via the array in the Details panel or by duplication if implemented. (Basic array editing: Click `+` on `Landmarks` array).
+    *   **Move Points**: Drag the diamond handles in the viewport.
+4.  **Load/Save**:
+    *   Click **`Load From Json`** to load existing data from disk (if any).
+    *   Click **`Save To Json`** to save your changes to the file.
+
+### 2. Runtime (Game)
+
+*   **No Setup Required**: You do **not** need the `LandmarkCloudActor` at runtime. It destroys itself automatically.
+*   **Auto-Load**: The `LandmarkSubsystem` automatically looks for `Content/MapData/Landmarks_<MapName>.json` when the world begins.
+*   **Verification**: Check the Output Log for "LandmarkSubsystem: Successfully loaded..." messages.
+
 ## 核心特性 (Core Features)
 
 ### 1. 反直觉缩放 (Counter-intuitive / Adaptive Scaling)
