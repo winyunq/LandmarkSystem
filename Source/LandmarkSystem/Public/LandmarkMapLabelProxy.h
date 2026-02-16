@@ -42,6 +42,11 @@ public:
 
 public:
 	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void BeginPlay() override;
+
+	/** Snaps the actor to the ground using a line trace */
+	UFUNCTION(CallInEditor, Category = "Landmark")
+	void SnapToGround();
 	
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
