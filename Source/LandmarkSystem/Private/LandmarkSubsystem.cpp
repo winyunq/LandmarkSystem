@@ -98,9 +98,18 @@ bool ULandmarkSubsystem::SaveLandmarksToFile(const FString& FileName, const TArr
     FString RelativePath = FPaths::ProjectContentDir() / TEXT("MapData") / FileName;
     
     TArray<TSharedPtr<FJsonValue>> JsonArray;
-    // FJsonObjectConverter::UStructArrayToJson requires the Array property type.
-    // Actually simpler: UStructArrayToJson<FLandmarkInstanceData>(...)
-    if (FJsonObjectConverter::UStructArrayToJson(DataToSave, JsonArray))
+    
+    // Manual serialization because UStructArrayToJson might not exist or isn't exposed correctly
+    for (const FLandmarkInstanceData& Data : DataToSave)
+    {
+        TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
+        if (FJsonObjectConverter::UStructToJsonObject(FLandmarkInstanceData::StaticStruct(), &Data, JsonObj, 0, 0))
+        {
+            JsonArray.Add(MakeShared<FJsonValueObject>(JsonObj));
+        }
+    }
+    
+    if (JsonArray.Num() > 0)
     {
         FString JsonString;
         TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);

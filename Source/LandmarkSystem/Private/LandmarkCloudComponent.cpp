@@ -65,7 +65,17 @@ void ULandmarkCloudComponent::SaveToJson()
     // Let's duplicate or make static helper. Given compilation error, just fix locally.
     
     TArray<TSharedPtr<FJsonValue>> JsonArray;
-    if (FJsonObjectConverter::UStructArrayToJson(Landmarks, JsonArray))
+    
+    for (const FLandmarkInstanceData& Data : Landmarks)
+    {
+        TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
+        if (FJsonObjectConverter::UStructToJsonObject(FLandmarkInstanceData::StaticStruct(), &Data, JsonObj, 0, 0))
+        {
+            JsonArray.Add(MakeShared<FJsonValueObject>(JsonObj));
+        }
+    }
+
+    if (JsonArray.Num() > 0)
     {
         FString JsonString;
         TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
