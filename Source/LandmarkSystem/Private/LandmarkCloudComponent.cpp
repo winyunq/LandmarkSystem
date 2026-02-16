@@ -33,16 +33,19 @@ void ULandmarkCloudComponent::ClearLandmarks()
 void ULandmarkCloudComponent::AddLandmarkPoint()
 {
 	FLandmarkInstanceData NewPoint;
-	NewPoint.ID = FGuid::NewGuid().ToString(); // Auto-generate ID
-	NewPoint.DisplayName = FText::FromString("New Landmark");
-	NewPoint.WorldLocation = GetComponentLocation(); // Add at Actor/Component location
-    NewPoint.VisualConfig.BaseScale = 1.0f;
-    NewPoint.VisualConfig.MinVisibleHeight = 0.0f;
-    NewPoint.VisualConfig.MaxVisibleHeight = 100000.0f;
+    FString NewID = FGuid::NewGuid().ToString();
+	NewPoint.ID = NewID; // Keep internal ID
+	NewPoint.Name = TEXT("New Landmark");
+    
+    FVector Loc = GetComponentLocation();
+    NewPoint.X = Loc.X;
+    // Default config
+    MinVisibleHeight = 0.0f;
+    MaxVisibleHeight = 100000.0f;
 	
 	Landmarks.Add(NewPoint);
     
-    UE_LOG(LogTemp, Log, TEXT("LandmarkCloud: Added new point at %s"), *NewPoint.WorldLocation.ToString());
+    UE_LOG(LogTemp, Log, TEXT("LandmarkCloud: Added new point %s"), *NewPoint.Name);
 }
 
 void ULandmarkCloudComponent::LoadFromJson()
@@ -96,6 +99,9 @@ void ULandmarkCloudComponent::SaveToJson()
         TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
         if (FJsonSerializer::Serialize(JsonArray, Writer))
         {
+            // TextComponent->SetTextRenderColor(VisualConfig.Color.ToFColor(true)); // Color removed?
+            // TextComponent->SetTextRenderColor(FColor::White); // Default white
+            // TextComponent->SetWorldSize(100.0f); // Fixed size
             if (FFileHelper::SaveStringToFile(JsonString, *RelativePath))
             {
                 UE_LOG(LogTemp, Log, TEXT("LandmarkCloud: Saved %d points to %s"), Landmarks.Num(), *RelativePath);

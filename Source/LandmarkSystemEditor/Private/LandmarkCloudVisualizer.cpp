@@ -55,7 +55,7 @@ void FLandmarkCloudVisualizer::DrawVisualization(const UActorComponent* Componen
         // Based on "Import/Export" requirement, usually absolute is better for map data.
         // But if we move the cloud actor, usually we want points to move?
         // Let's assume World Space for now as it's "Map Labels".
-        FVector PointLoc = Data.WorldLocation; 
+        FVector PointLoc = Data.GetLocation(); 
 
         // Color based on selection
         FLinearColor Color = (i == SelectedPointIndex) ? FLinearColor::Yellow : FLinearColor::Green;
@@ -92,7 +92,7 @@ bool FLandmarkCloudVisualizer::GetWidgetLocation(const FEditorViewportClient* Vi
     const ULandmarkCloudComponent* CloudComp = Cast<const ULandmarkCloudComponent>(PropertyPath.GetComponent());
     if (CloudComp && CloudComp->Landmarks.IsValidIndex(SelectedPointIndex))
     {
-        OutLocation = CloudComp->Landmarks[SelectedPointIndex].WorldLocation;
+        OutLocation = CloudComp->Landmarks[SelectedPointIndex].GetLocation();
         return true;
     }
     return false;
@@ -106,7 +106,18 @@ bool FLandmarkCloudVisualizer::HandleInputDelta(FEditorViewportClient* ViewportC
         if (!DeltaTranslate.IsZero())
         {
             CloudComp->Modify(); // Notify Editor of change for Undo/Redo
-            CloudComp->Landmarks[SelectedPointIndex].WorldLocation += DeltaTranslate;
+            
+            FLandmarkInstanceData& Point = CloudComp->Landmarks[SelectedPointIndex];
+            Point.X += DeltaTranslate.X;
+            Point.Y += DeltaTranslate.Y;
+            // Point.Z? LandmarkData doesn't store Z? 
+            // Wait, struct has ZMin/ZMax but no Z pos? 
+            // User requested flat: Name, X, Y, ZMin, ZMax. 
+            // Does this mean landmarks are 2D on the map (Z=0 implicit)? 
+            // Or X,Y implies Z is ground?
+            // "WorldLocation: { X, Y, ZMin, ZMax }"
+            // I removed Z from struct. So editing Z in visualizer is impossible or ignored.
+            // Let's assume Z is just not stored/visualized or derived from terrain.
             
             // Re-render
             GUnrealEd->RedrawLevelEditingViewports();

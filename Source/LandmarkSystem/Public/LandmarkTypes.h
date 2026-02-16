@@ -60,23 +60,31 @@ struct FLandmarkInstanceData
     GENERATED_BODY()
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString Name;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    double X = 0.0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    double Y = 0.0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    double ZMin = 0.0; // MinVisibleHeight
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    double ZMax = 100000.0; // MaxVisibleHeight
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString Type = TEXT("Generic");
+
+    // Helper ID for internal tracking (can default to Name)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString ID;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    FText DisplayName;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    FVector WorldLocation = FVector::ZeroVector;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    ELandmarkType Type = ELandmarkType::Generic;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    FLandmarkVisualConfig VisualConfig;
-
-    // Optional: Link to an actor (e.g., City Actor). If invalid, just use WorldLocation.
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     TWeakObjectPtr<AActor> LinkedActor = nullptr;
 
     FLandmarkInstanceData() {}
+    
+    FVector GetLocation() const { return FVector(X, Y, 0.0); }
 };

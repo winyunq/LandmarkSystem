@@ -30,8 +30,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark")
 	ELandmarkType Type;
 
+	/* Minimum Camera Height (Z) at which this landmark is visible. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark")
-	FLandmarkVisualConfig VisualConfig;
+	float MinVisibleHeight = 0.0f;
+
+	/* Maximum Camera Height (Z) at which this landmark is visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark")
+	float MaxVisibleHeight = 100000.0f;
 
 	// Visual Components
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Landmark")

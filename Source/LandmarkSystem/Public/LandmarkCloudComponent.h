@@ -24,6 +24,14 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark IO")
     FString JsonFileName = "DefaultLandmarks.json";
 
+    /* Minimum Camera Height (Z) at which this landmark is visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark")
+	float MinVisibleHeight = 0.0f;
+
+	/* Maximum Camera Height (Z) at which this landmark is visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark")
+	float MaxVisibleHeight = 100000.0f;
+
 	/** The raw data matrix. Edited via Visualizer. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark Cloud")
 	TArray<FLandmarkInstanceData> Landmarks;

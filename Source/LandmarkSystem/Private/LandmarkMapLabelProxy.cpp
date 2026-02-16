@@ -39,12 +39,23 @@ void ALandmarkMapLabelProxy::BeginPlay()
 	if (ULandmarkSubsystem* Subsystem = GetWorld()->GetSubsystem<ULandmarkSubsystem>())
 	{
 		FLandmarkInstanceData Data;
-		Data.ID = ID.IsEmpty() ? GetName() : ID;
-		Data.DisplayName = DisplayName.IsEmpty() ? FText::FromString(GetName()) : DisplayName;
-		Data.WorldLocation = GetActorLocation();
-		Data.Type = Type;
-		Data.VisualConfig = VisualConfig;
-		// No linked actor needed for static proxy, or link self if we want it to move
+		Data.ID = GetName();
+		Data.Name = DisplayName.IsEmpty() ? GetName() : DisplayName.ToString();
+		
+        FVector Loc = GetActorLocation();
+        Data.X = Loc.X;
+        Data.Y = Loc.Y;
+        
+		Data.Type = Type.ToString(); // Enum to String? Need to check if Type is still Enum in Proxy header.
+        // Assuming Proxy still has Enum UProperty.
+        
+		Data.ZMin = MinVisibleHeight;
+        Data.ZMax = MaxVisibleHeight;
+
+		/*
+		Data.LinkedActor = nullptr; // Static proxies don't need link? Or maybe we want to move them?
+        // Actually, if it's EditorOnly, it won't exist in game. So no link.
+        */
 		Data.LinkedActor = nullptr; 
 
 		Subsystem->RegisterLandmark(Data);

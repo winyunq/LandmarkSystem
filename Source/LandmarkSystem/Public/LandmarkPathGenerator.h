@@ -34,8 +34,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark")
 	ELandmarkType Type = ELandmarkType::River;
 
+	/* Minimum Camera Height (Z) at which this landmark is visible. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark")
-	FLandmarkVisualConfig VisualConfig;
+	float MinVisibleHeight = 0.0f;
+
+	/* Maximum Camera Height (Z) at which this landmark is visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark")
+	float MaxVisibleHeight = 100000.0f;
 
 protected:
 	virtual void BeginPlay() override;

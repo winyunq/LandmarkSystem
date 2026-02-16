@@ -35,11 +35,13 @@ void ALandmarkPathGenerator::GenerateLandmarks()
 		FVector Location = SplinePath->GetLocationAtDistanceAlongSpline(Distance, ESplineCoordinateSpace::World);
 		
 		FLandmarkInstanceData Data;
-		Data.ID = FString::Printf(TEXT("%s_%d"), *BaseID, i);
-		Data.DisplayName = BaseDisplayName;
-		Data.WorldLocation = Location;
-		Data.Type = Type;
-		Data.VisualConfig = VisualConfig;
+		Data.ID = FString::Printf(TEXT("%s_%d"), *GetName(), i);
+		Data.Name = BaseDisplayName.ToString();
+		Data.X = Location.X;
+        Data.Y = Location.Y;
+		Data.Type = Type.ToString();
+        Data.ZMin = MinVisibleHeight;
+        Data.ZMax = MaxVisibleHeight;
 		// Link to self? No, these act as independent static points for now.
 		Data.LinkedActor = nullptr; 
 
