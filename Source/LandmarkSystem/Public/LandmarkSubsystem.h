@@ -22,8 +22,7 @@ class LANDMARKSYSTEM_API ULandmarkSubsystem : public UWorldSubsystem
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
-
-    void OnWorldBeginPlay(UWorld* World);
+    virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
 	// --- Registration API ---
 

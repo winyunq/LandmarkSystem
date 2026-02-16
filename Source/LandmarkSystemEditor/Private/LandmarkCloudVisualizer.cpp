@@ -26,8 +26,23 @@ void FLandmarkCloudVisualizer::DrawVisualization(const UActorComponent* Componen
 
     // Standard way to get properties?
     // Usually we don't use ComponentPropertyPath here unless we stored it.
-
-
+    // But Visualizer usually works on the component passed in DrawVisualization.
+    
+    // NOTE: Visualizers don't persist state easily between Draw calls unless we store selection.
+    // If we want to move points, we need to know which component we are editing during Input.
+    
+    // We can't really "fix" PropertyPath not being declared if it's a member we added to header but implementation doesn't see it?
+    // Wait, did I Add PropertyPath to header? Yes, in Plan. But maybe header file wasn't updated correctly?
+    // Let's assume PropertyPath IS a member of FLandmarkCloudVisualizer.
+    // The error says "undeclared identifier". This means the header likely doesn't have it, or it wasn't saved?
+    // Ah, Visualizer usually stores the property path when hit proxy is clicked.
+    // Let's check header content in next step. For now, assume we need to use 'Component' directly in Draw.
+    // But HandleInputDelta doesn't get 'Component'. It gets ViewportClient.
+    // So we MUST store the component we are editing.
+    
+    // In DrawVisualization, we are just drawing. We don't need PropertyPath yet.
+    // But we need to make sure PropertyPath IS defined in the class.
+    
     const FTransform& CompTransform = CloudComp->GetComponentTransform();
     const TArray<FLandmarkInstanceData>& Points = CloudComp->Landmarks;
 
@@ -74,7 +89,7 @@ bool FLandmarkCloudVisualizer::VisProxyHandleClick(FEditorViewportClient* InView
 
 bool FLandmarkCloudVisualizer::GetWidgetLocation(const FEditorViewportClient* ViewportClient, FVector& OutLocation) const
 {
-    const ULandmarkCloudComponent* CloudComp = Cast<const ULandmarkCloudComponent>(ComponentPropertyPath.GetComponent());
+    const ULandmarkCloudComponent* CloudComp = Cast<const ULandmarkCloudComponent>(PropertyPath.GetComponent());
     if (CloudComp && CloudComp->Landmarks.IsValidIndex(SelectedPointIndex))
     {
         OutLocation = CloudComp->Landmarks[SelectedPointIndex].WorldLocation;
@@ -85,7 +100,7 @@ bool FLandmarkCloudVisualizer::GetWidgetLocation(const FEditorViewportClient* Vi
 
 bool FLandmarkCloudVisualizer::HandleInputDelta(FEditorViewportClient* ViewportClient, FViewport* Viewport, FVector& DeltaTranslate, FRotator& DeltaRotate, FVector& DeltaScale)
 {
-    ULandmarkCloudComponent* CloudComp = Cast<ULandmarkCloudComponent>(ComponentPropertyPath.GetComponent());
+    ULandmarkCloudComponent* CloudComp = Cast<ULandmarkCloudComponent>(PropertyPath.GetComponent());
     if (CloudComp && CloudComp->Landmarks.IsValidIndex(SelectedPointIndex))
     {
         if (!DeltaTranslate.IsZero())

@@ -9,31 +9,24 @@
 void ULandmarkSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-	
-    // Auto-Load Data for this Map
-    // We bind to OnWorldBeginPlay to ensure map name is ready and world is valid
-    FWorldDelegates::OnWorldBeginPlay.AddUObject(this, &ULandmarkSubsystem::OnWorldBeginPlay);
 }
 
-void ULandmarkSubsystem::OnWorldBeginPlay(UWorld* World)
+void ULandmarkSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
-    // Ensure we only load for our world
-    if (World == GetWorld())
-    {
-        // Construct filename: "Landmarks_MapName.json"
-        // GetMapName() returns "IED_MapName" or just "MapName". Be careful with PIE prefixes.
-        FString MapName = World->GetName();
-        
-        // Remove PIE prefix if needed (UEDPIE_0_...)
-        MapName.RemoveFromStart(World->StreamingLevelsPrefix); // Often handles the PIE prefix? 
-        // Or simpler: FPaths::GetBaseFilename(World->GetMapName());
-        
-        // For simplicity, let's look for "Landmarks_<MapName>.json"
-        FString FileName = FString::Printf(TEXT("Landmarks_%s.json"), *MapName);
-        
-        // Try load
-        LoadLandmarksFromFile(FileName);
-    }
+    // Auto-Load Data for this Map
+    
+    // Construct filename: "Landmarks_MapName.json"
+    // GetMapName() returns "IED_MapName" or just "MapName". Be careful with PIE prefixes.
+    FString MapName = InWorld.GetName();
+    
+    // Remove PIE prefix if needed (UEDPIE_0_...)
+    MapName.RemoveFromStart(InWorld.StreamingLevelsPrefix); 
+    
+    // For simplicity, let's look for "Landmarks_<MapName>.json"
+    FString FileName = FString::Printf(TEXT("Landmarks_%s.json"), *MapName);
+    
+    // Try load (Log warning handled by Load function)
+    LoadLandmarksFromFile(FileName);
 }
 
 void ULandmarkSubsystem::Deinitialize()
@@ -105,6 +98,8 @@ bool ULandmarkSubsystem::SaveLandmarksToFile(const FString& FileName, const TArr
     FString RelativePath = FPaths::ProjectContentDir() / TEXT("MapData") / FileName;
     
     TArray<TSharedPtr<FJsonValue>> JsonArray;
+    // FJsonObjectConverter::UStructArrayToJson requires the Array property type.
+    // Actually simpler: UStructArrayToJson<FLandmarkInstanceData>(...)
     if (FJsonObjectConverter::UStructArrayToJson(DataToSave, JsonArray))
     {
         FString JsonString;
