@@ -39,7 +39,14 @@ void ALandmarkPathGenerator::GenerateLandmarks()
 		Data.Name = BaseDisplayName.ToString();
 		Data.X = Location.X;
         Data.Y = Location.Y;
-		Data.Type = Type.ToString();
+		if (const UEnum* EnumPtr = StaticEnum<ELandmarkType>())
+        {
+            Data.Type = EnumPtr->GetNameStringByValue((int64)Type);
+        }
+        else
+        {
+            Data.Type = TEXT("Generic");
+        }
         Data.ZMin = MinVisibleHeight;
         Data.ZMax = MaxVisibleHeight;
 		// Link to self? No, these act as independent static points for now.

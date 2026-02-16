@@ -47,7 +47,15 @@ void ULandmarkComponent::BeginPlay()
         Data.X = Loc.X;
         Data.Y = Loc.Y;
         
-        Data.Type = Type.ToString(); 
+        // Convert Enum to String
+        if (const UEnum* EnumPtr = StaticEnum<ELandmarkType>())
+        {
+            Data.Type = EnumPtr->GetNameStringByValue((int64)Type);
+        }
+        else
+        {
+             Data.Type = TEXT("Generic");
+        } 
         
         Data.ZMin = MinVisibleHeight;
         Data.ZMax = MaxVisibleHeight;

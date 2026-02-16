@@ -46,7 +46,15 @@ void ALandmarkMapLabelProxy::BeginPlay()
         Data.X = Loc.X;
         Data.Y = Loc.Y;
         
-		Data.Type = Type.ToString(); // Enum to String? Need to check if Type is still Enum in Proxy header.
+		// Convert Enum to String
+        if (const UEnum* EnumPtr = StaticEnum<ELandmarkType>())
+        {
+            Data.Type = EnumPtr->GetNameStringByValue((int64)Type);
+        }
+        else
+        {
+             Data.Type = TEXT("Generic");
+        }
         // Assuming Proxy still has Enum UProperty.
         
 		Data.ZMin = MinVisibleHeight;
