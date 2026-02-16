@@ -78,14 +78,33 @@ bool ULandmarkSubsystem::LoadLandmarksFromFile(const FString& FileName)
         return false;
     }
 
-    TArray<FLandmarkInstanceData> ImportData;
-    if (FJsonObjectConverter::JsonArrayStringToUStruct(JsonString, &ImportData, 0, 0))
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+    TArray<TSharedPtr<FJsonValue>> JsonArray;
+
+    if (FJsonSerializer::Deserialize(Reader, JsonArray))
     {
-        for (const FLandmarkInstanceData& Data : ImportData)
+        RegisteredLandmarks.Reset();
+        for (const TSharedPtr<FJsonValue>& Value : JsonArray)
         {
-            RegisterLandmark(Data);
+            const TSharedPtr<FJsonObject>* ObjectPtr;
+            if (Value->TryGetObject(ObjectPtr) && ObjectPtr)
+            {
+                FLandmarkInstanceData Data;
+                FJsonObjectConverter::JsonObjectToUStruct((*ObjectPtr).ToSharedRef(), &Data);
+                
+                // Fallback ID
+                if (Data.ID.IsEmpty()) Data.ID = FGuid::NewGuid().ToString();
+                
+                RegisterLandmark(Data);
+            }
         }
-        UE_LOG(LogTemp, Log, TEXT("LandmarkSubsystem: Successfully loaded %d landmarks from %s"), ImportData.Num(), *FileName);
+        
+        FString Msg = FString::Printf(TEXT("LandmarkSystem: Loaded %d landmarks from %s"), RegisteredLandmarks.Num(), *FileName);
+        UE_LOG(LogTemp, Log, TEXT("%s"), *Msg);
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Green, Msg);
+        }
         return true;
     }
     
@@ -153,14 +172,16 @@ void ULandmarkSubsystem::UpdateCameraState(const FVector& CameraLocation, const 
 		const FLandmarkInstanceData& Data = Pair.Value;
 
 		// 1. Height Level Filtering
-        // "Level 1" = High Altitude, "Level 2" = Low Altitude
-		if (CameraHeight < Data.VisualConfig.MinVisibleHeight || CameraHeight > Data.VisualConfig.MaxVisibleHeight)
+		// DEBUG: Disable height check to ensure we see them
+		/*
+		if (CameraHeight < Data.ZMin || CameraHeight > Data.ZMax)
 		{
 			continue;
 		}
+		*/
 
 		// 2. Location
-		FVector Location = Data.WorldLocation;
+		FVector Location = Data.GetLocation();
 		if (Data.LinkedActor.IsValid())
 		{
 			Location = Data.LinkedActor->GetActorLocation();
@@ -170,15 +191,17 @@ void ULandmarkSubsystem::UpdateCameraState(const FVector& CameraLocation, const 
 		FVector2D ScreenPos;
 		bool bOnScreen = ProjectWorldLocationToScreen(Location, ScreenPos);
 
+        // DEBUG check
+        // UE_LOG(LogTemp, Warning, TEXT("Checking %s: Loc %s, OnScreen: %d"), *Data.Name, *Location.ToString(), bOnScreen);
+
 		if (bOnScreen)
 		{
 			VisibleLandmarkIDs.Add(Data.ID);
 			CachedScreenPositions.Add(ScreenPos);
 			
-			// Constant Scale as requested
-			CachedScales.Add(Data.VisualConfig.BaseScale);
+			// Constant Scale
+			CachedScales.Add(1.0f); // BaseScale removed, default to 1.0
 			
-            // Constant Alpha for now, or fade out at edges? Keep simple.
 			CachedAlphas.Add(1.0f);
 		}
 	}
@@ -228,7 +251,7 @@ void ULandmarkSubsystem::DrawLandmarks(UCanvas* InCanvas)
         // Draw Text
         FCanvasTextItem TextItem(
             ScreenPos,
-            Data.DisplayName,
+            FText::FromString(Data.Name),
             GEngine->GetLargeFont(), 
             FLinearColor(1.0f, 1.0f, 1.0f, Alpha)
         );
@@ -238,13 +261,20 @@ void ULandmarkSubsystem::DrawLandmarks(UCanvas* InCanvas)
         
         // Measure text for centering
         float XL, YL;
-        InCanvas->StrLen(GEngine->GetLargeFont(), Data.DisplayName.ToString(), XL, YL);
+        InCanvas->StrLen(GEngine->GetLargeFont(), Data.Name, XL, YL);
         TextItem.DrawnSize = FVector2D(XL, YL);
         
         // Center alignment
         TextItem.Position -= (TextItem.DrawnSize * Scale * 0.5f);
 
         InCanvas->DrawItem(TextItem);
+    }
+    
+    // DEBUG: Show counts
+    if (GEngine)
+    {
+         FString Stats = FString::Printf(TEXT("Landmarks: Total %d | Visible %d"), RegisteredLandmarks.Num(), VisibleLandmarkIDs.Num());
+         InCanvas->DrawText(GEngine->GetLargeFont(), Stats, 100, 100);
     }
 }
 
