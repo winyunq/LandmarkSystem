@@ -41,6 +41,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
 	void UnregisterAll();
 
+    // --- File I/O ---
+
+    /** Load landmarks from a JSON file (Relative to Project Content/MapData/) */
+    UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
+    bool LoadLandmarksFromFile(const FString& FileName);
+
+    /** Save landmarks to a JSON file (Relative to Project Content/MapData/) */
+    UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
+    bool SaveLandmarksToFile(const FString& FileName, const TArray<FLandmarkInstanceData>& DataToSave);
+
 	// --- Runtime API ---
 
 	/** 

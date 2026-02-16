@@ -2,6 +2,9 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
+#include "JsonObjectConverter.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 void ULandmarkSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -11,20 +14,6 @@ void ULandmarkSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	// Zoom 0.0 (Close): Scale 0.5, Alpha 0.0 (Hide)
 	// Zoom 0.5 (Mid): Scale 1.0, Alpha 1.0
 	// Zoom 1.0 (Far): Scale 2.0, Alpha 1.0
-	
-	// Note: In a real scenario, these keys should be set in a DataAsset or Config
-	// Here we just ensure it's not empty for safety
-	/*
-	FRichCurve* ScaleKeys = ScaleCurve.GetRichCurve();
-	ScaleKeys->AddKey(0.0f, 0.5f);
-	ScaleKeys->AddKey(0.2f, 0.8f);
-	ScaleKeys->AddKey(1.0f, 2.5f);
-
-	FRichCurve* AlphaKeys = AlphaCurve.GetRichCurve();
-	AlphaKeys->AddKey(0.0f, 0.0f);
-	AlphaKeys->AddKey(0.1f, 1.0f);
-	AlphaKeys->AddKey(1.0f, 1.0f);
-	*/
 }
 
 void ULandmarkSubsystem::Deinitialize()
@@ -63,6 +52,50 @@ void ULandmarkSubsystem::UnregisterLandmark(const FString& ID)
 void ULandmarkSubsystem::UnregisterAll()
 {
 	RegisteredLandmarks.Empty();
+}
+
+bool ULandmarkSubsystem::LoadLandmarksFromFile(const FString& FileName)
+{
+    FString RelativePath = FPaths::ProjectContentDir() / TEXT("MapData") / FileName;
+    FString JsonString;
+    
+    if (!FFileHelper::LoadFileToString(JsonString, *RelativePath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("LandmarkSubsystem: Failed to load file %s"), *RelativePath);
+        return false;
+    }
+
+    TArray<FLandmarkInstanceData> ImportData;
+    if (FJsonObjectConverter::JsonArrayStringToUStruct(JsonString, &ImportData, 0, 0))
+    {
+        for (const FLandmarkInstanceData& Data : ImportData)
+        {
+            RegisterLandmark(Data);
+        }
+        UE_LOG(LogTemp, Log, TEXT("LandmarkSubsystem: Successfully loaded %d landmarks from %s"), ImportData.Num(), *FileName);
+        return true;
+    }
+    
+    UE_LOG(LogTemp, Error, TEXT("LandmarkSubsystem: Failed to parse JSON from %s"), *FileName);
+    return false;
+}
+
+bool ULandmarkSubsystem::SaveLandmarksToFile(const FString& FileName, const TArray<FLandmarkInstanceData>& DataToSave)
+{
+    FString RelativePath = FPaths::ProjectContentDir() / TEXT("MapData") / FileName;
+    FString JsonString;
+    
+    if (FJsonObjectConverter::UStructArrayToJsonString(DataToSave, JsonString))
+    {
+        if (FFileHelper::SaveStringToFile(JsonString, *RelativePath))
+        {
+            UE_LOG(LogTemp, Log, TEXT("LandmarkSubsystem: Saved %d landmarks to %s"), DataToSave.Num(), *RelativePath);
+            return true;
+        }
+    }
+    
+    UE_LOG(LogTemp, Error, TEXT("LandmarkSubsystem: Failed to save JSON to %s"), *RelativePath);
+    return false;
 }
 
 void ULandmarkSubsystem::UpdateCameraState(const FVector& CameraLocation, const FRotator& CameraRotation, float FOV, float ZoomFactor)

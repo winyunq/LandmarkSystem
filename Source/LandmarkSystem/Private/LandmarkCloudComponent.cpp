@@ -1,5 +1,8 @@
 #include "LandmarkCloudComponent.h"
 #include "LandmarkSubsystem.h"
+#include "JsonObjectConverter.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 ULandmarkCloudComponent::ULandmarkCloudComponent()
 {
@@ -10,35 +13,27 @@ void ULandmarkCloudComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-    if (Landmarks.Num() == 0) return;
-
+    // Runtime Logic:
+    // 1. Tell Subsystem to load the file associated with this component
     if (ULandmarkSubsystem* Subsystem = GetWorld()->GetSubsystem<ULandmarkSubsystem>())
     {
-        for (const FLandmarkInstanceData& Data : Landmarks)
+        if (!JsonFileName.IsEmpty())
         {
-            // Transform local location to world location if needed
-            // Data.WorldLocation is stored as world location? 
-            // Usually simpler if stored as Local Offset, but for "Map Labels" absolute world coordinates often preferred.
-            // Let's assume Data.WorldLocation IS World Location.
-            // If the user moves the CloudComponent, do points move?
-            // "Cloud" usually implies points are relative to the component?
-            // If points are absolute, moving component does nothing.
-            // Let's support Relative. But `FLandmarkInstanceData` has `WorldLocation`.
-            // Decision: If we are editing "Map Points", usually we want them absolute.
-            // But SceneComponents usually imply hierarchy.
-            // If the Visualizer writes to `Data.WorldLocation`, then moving the component transform changes nothing?
-            // Better behavior: Store as Relative, Register as World.
-            // But `FLandmarkInstanceData` struct is shared and used by everything as "WorldLocation".
-            // Let's modify registration: Register(Data) expects WorldLocation.
-            // If stored data is also deemed "WorldLocation" (e.g. imported from GIS), we just pass it.
-            // If we want hierarchy support, we should add `GetComponentTransform().TransformPosition(Data.Location)`.
-            // For now, let's assume Data.WorldLocation is ABSOLUTE.
-            
-            Subsystem->RegisterLandmark(Data);
+            Subsystem->LoadLandmarksFromFile(JsonFileName);
+        }
+        else if (Landmarks.Num() > 0)
+        {
+            // Fallback: If no file specified but we have legacy data in array, register it
+            // (Only for quick debug, normally usage uses JSON)
+            for (const FLandmarkInstanceData& Data : Landmarks)
+            {
+                Subsystem->RegisterLandmark(Data);
+            }
         }
     }
 
-    // Optimization: We don't need to exist anymore after dumping data.
+    // 2. Zero Overhead Optimization
+    // We have handed off the instructions (or data). Now we die.
     DestroyComponent();
 }
 
@@ -54,4 +49,45 @@ void ULandmarkCloudComponent::ImportLandmarks(const TArray<FLandmarkInstanceData
 void ULandmarkCloudComponent::ClearLandmarks()
 {
     Landmarks.Empty();
+}
+
+void ULandmarkCloudComponent::LoadFromJson()
+{
+    // Reuse Subsystem logic if possible? No, Subsystem is Runtime.
+    // We are likely in Editor. Can we access Subsystem? Yes, Editor World has Subsystems.
+    // But Subsystem loads into "RegisteredLandmarks", we want to load into "Landmarks" TArray.
+    // So we need explicit logic here.
+    
+    FString RelativePath = FPaths::ProjectContentDir() / TEXT("MapData") / JsonFileName;
+    FString JsonString;
+    
+    if (FFileHelper::LoadFileToString(JsonString, *RelativePath))
+    {
+         if (FJsonObjectConverter::JsonArrayStringToUStruct(JsonString, &Landmarks, 0, 0))
+         {
+             UE_LOG(LogTemp, Log, TEXT("LandmarkCloud: Loaded %d points from %s"), Landmarks.Num(), *RelativePath);
+         }
+         else
+         {
+             UE_LOG(LogTemp, Error, TEXT("LandmarkCloud: Failed to parse JSON."));
+         }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("LandmarkCloud: File not found %s"), *RelativePath);
+    }
+}
+
+void ULandmarkCloudComponent::SaveToJson()
+{
+    FString RelativePath = FPaths::ProjectContentDir() / TEXT("MapData") / JsonFileName;
+    FString JsonString;
+    
+    if (FJsonObjectConverter::UStructArrayToJsonString(Landmarks, JsonString))
+    {
+        if (FFileHelper::SaveStringToFile(JsonString, *RelativePath))
+        {
+            UE_LOG(LogTemp, Log, TEXT("LandmarkCloud: Saved %d points to %s"), Landmarks.Num(), *RelativePath);
+        }
+    }
 }
