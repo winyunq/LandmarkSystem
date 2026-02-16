@@ -221,6 +221,49 @@ void ULandmarkSubsystem::GetVisibleLandmarks(TArray<FLandmarkInstanceData>& OutV
 	}
 }
 
+void ULandmarkSubsystem::DrawLandmarks(UCanvas* InCanvas)
+{
+    if (!InCanvas) return;
+
+    // Use cached data directly
+    for (int32 i = 0; i < VisibleLandmarkIDs.Num(); ++i)
+    {
+        if (!CachedScreenPositions.IsValidIndex(i)) continue;
+
+        FString ID = VisibleLandmarkIDs[i];
+        FLandmarkInstanceData* DataPtr = RegisteredLandmarks.Find(ID);
+        if (!DataPtr) continue;
+
+        const FLandmarkInstanceData& Data = *DataPtr;
+        const FVector2D& ScreenPos = CachedScreenPositions[i];
+        float Scale = CachedScales[i];
+        float Alpha = CachedAlphas[i];
+        
+        if (Alpha <= 0.01f) continue;
+
+        // Draw Text
+        FCanvasTextItem TextItem(
+            ScreenPos,
+            Data.DisplayName,
+            GEngine->GetLargeFont(), 
+            FLinearColor(1.0f, 1.0f, 1.0f, Alpha)
+        );
+        
+        TextItem.Scale = FVector2D(Scale, Scale);
+        TextItem.EnableShadow(FLinearColor::Black);
+        
+        // Measure text for centering
+        float XL, YL;
+        InCanvas->StrLen(GEngine->GetLargeFont(), Data.DisplayName.ToString(), XL, YL);
+        TextItem.DrawnSize = FVector2D(XL, YL);
+        
+        // Center alignment
+        TextItem.Position -= (TextItem.DrawnSize * Scale * 0.5f);
+
+        InCanvas->DrawItem(TextItem);
+    }
+}
+
 bool ULandmarkSubsystem::ProjectWorldLocationToScreen(const FVector& WorldLocation, FVector2D& OutScreenPosition) const
 {
 	// Simple wrapper around UGameplayStatics
