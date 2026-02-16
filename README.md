@@ -12,9 +12,9 @@
     *   *Note: Files are saved to `Content/MapData/`.*
 3.  **Edit Points**:
     *   Select the **`LandmarkCloudComponent`** (or just click the Actor).
-    *   **Click** on the component visualizer in the viewport to select points (if any).
-    *   **Add Points**: Currently, points are added via the array in the Details panel or by duplication if implemented. (Basic array editing: Click `+` on `Landmarks` array).
+    *   **Add Points**: Click the **`Add Landmark Point`** button in the Details panel. (This adds a point at the Actor's location).
     *   **Move Points**: Drag the diamond handles in the viewport.
+    *   **Properties**: Expand the `Landmarks` array to edit names ("DisplayName") or ID.
 4.  **Load/Save**:
     *   Click **`Load From Json`** to load existing data from disk (if any).
     *   Click **`Save To Json`** to save your changes to the file.

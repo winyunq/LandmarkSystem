@@ -27,7 +27,22 @@ void ULandmarkCloudComponent::ImportLandmarks(const TArray<FLandmarkInstanceData
 
 void ULandmarkCloudComponent::ClearLandmarks()
 {
-    Landmarks.Empty();
+	Landmarks.Empty();
+}
+
+void ULandmarkCloudComponent::AddLandmarkPoint()
+{
+	FLandmarkInstanceData NewPoint;
+	NewPoint.ID = FGuid::NewGuid().ToString(); // Auto-generate ID
+	NewPoint.DisplayName = FText::FromString("New Landmark");
+	NewPoint.WorldLocation = GetComponentLocation(); // Add at Actor/Component location
+    NewPoint.VisualConfig.BaseScale = 1.0f;
+    NewPoint.VisualConfig.MinVisibleZoom = 0.0f;
+    NewPoint.VisualConfig.MaxVisibleZoom = 1.0f;
+	
+	Landmarks.Add(NewPoint);
+    
+    UE_LOG(LogTemp, Log, TEXT("LandmarkCloud: Added new point at %s"), *NewPoint.WorldLocation.ToString());
 }
 
 void ULandmarkCloudComponent::LoadFromJson()

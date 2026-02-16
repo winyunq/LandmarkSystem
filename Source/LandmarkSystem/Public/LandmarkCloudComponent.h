@@ -33,8 +33,12 @@ public:
     void ImportLandmarks(const TArray<FLandmarkInstanceData>& InLandmarks, bool bAppend = false);
     
     /** Helper to clear all points */
-    UFUNCTION(BlueprintCallable, Category = "Landmark Cloud")
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Landmark Cloud")
     void ClearLandmarks();
+
+    /** Add a new landmark point at the Actor's current location */
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Landmark Cloud")
+    void AddLandmarkPoint();
 
     // --- Editor Tools ---
     
