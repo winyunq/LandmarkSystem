@@ -19,13 +19,55 @@
     *   Click **`Load From Json`** to load existing data from disk (if any).
     *   Click **`Save To Json`** to save your changes to the file.
 
-### 2. Runtime (Game)
+## Data Format (JSON)
 
-*   **No Setup Required**: You do **not** need the `LandmarkCloudActor` at runtime. It destroys itself automatically.
-*   **Auto-Load**: The `LandmarkSubsystem` automatically looks for `Content/MapData/Landmarks_<MapName>.json` when the world begins.
-*   **Verification**: Check the Output Log for "LandmarkSubsystem: Successfully loaded..." messages.
+We use standard Unreal Engine JSON serialization.
+Each file (e.g., `Landmarks_64.json`) contains an **Array** of Landmark Objects.
 
-## 核心特性 (Core Features)
+### JSON Structure Example
+
+```json
+[
+  {
+    "ID": "Unique_ID_01",
+    "DisplayName": "Beijing (High Level)",
+    "WorldLocation": { "X": 10000, "Y": 20000, "Z": 100 },
+    "Type": "City", 
+    "VisualConfig": {
+      "BaseScale": 1.5,
+      "MinVisibleHeight": 2000.0,  
+      "MaxVisibleHeight": 100000.0,
+      "Color": { "R": 1.0, "G": 1.0, "B": 1.0, "A": 1.0 },
+      "Priority": 10
+    }
+  },
+  {
+    "ID": "Unique_ID_02",
+    "DisplayName": "Small Village (Low Level)",
+    "WorldLocation": { "X": 10500, "Y": 20500, "Z": 0 },
+    "Type": "City",
+    "VisualConfig": {
+      "BaseScale": 0.8,
+      "MinVisibleHeight": 0.0, 
+      "MaxVisibleHeight": 2000.0,
+      "Color": { "R": 0.8, "G": 0.8, "B": 0.8, "A": 1.0 },
+      "Priority": 5
+    }
+  }
+]
+```
+
+### Fields Explanation
+*   **`WorldLocation`**: Absolute world coordinates (UE units). Z is usually ground height.
+*   **`VisualConfig`**:
+    *   **`MinVisibleHeight` / `MaxVisibleHeight`**: The camera height range (Z-axis) where this label is visible.
+        *   e.g. `0 - 2000`: Visible only when close.
+        *   e.g. `4000 - 10000`: Visible only when far.
+        *   e.g. `0 - 100000`: Always visible.
+    *   **`BaseScale`**: Text size multiplier.
+*   **`Type`**: Enum String: `"Generic"`, `"City"`, `"Capital"`, `"Region"`, `"Mountain"`, `"River"`.
+
+### 3. Editor Workflow
 
 ### 1. 反直觉缩放 (Counter-intuitive / Adaptive Scaling)
 在传统透视投影中，当相机拉远时，物体会变小直到不可见。而在策略地图中，我们希望：
