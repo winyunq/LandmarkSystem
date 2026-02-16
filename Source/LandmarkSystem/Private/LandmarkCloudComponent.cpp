@@ -68,7 +68,7 @@ void ULandmarkCloudComponent::SaveToJson()
     
     for (const FLandmarkInstanceData& Data : Landmarks)
     {
-        TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
+        TSharedRef<FJsonObject> JsonObj = MakeShared<FJsonObject>();
         if (FJsonObjectConverter::UStructToJsonObject(FLandmarkInstanceData::StaticStruct(), &Data, JsonObj, 0, 0))
         {
             JsonArray.Add(MakeShared<FJsonValueObject>(JsonObj));

@@ -102,7 +102,7 @@ bool ULandmarkSubsystem::SaveLandmarksToFile(const FString& FileName, const TArr
     // Manual serialization because UStructArrayToJson might not exist or isn't exposed correctly
     for (const FLandmarkInstanceData& Data : DataToSave)
     {
-        TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
+        TSharedRef<FJsonObject> JsonObj = MakeShared<FJsonObject>();
         if (FJsonObjectConverter::UStructToJsonObject(FLandmarkInstanceData::StaticStruct(), &Data, JsonObj, 0, 0))
         {
             JsonArray.Add(MakeShared<FJsonValueObject>(JsonObj));
