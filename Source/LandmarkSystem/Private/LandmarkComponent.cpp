@@ -8,10 +8,12 @@ ULandmarkComponent::ULandmarkComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
     
+    	// Default Configs
+    MinVisibleHeight = 0.0f;
+    MaxVisibleHeight = 100000.0f;
+    
     // Default config
     VisualConfig.BaseScale = 1.0f;
-    VisualConfig.MinVisibleHeight = 0.0f;
-    VisualConfig.MaxVisibleHeight = 100000.0f;
 }
 
 void ULandmarkComponent::OnRegister()
@@ -40,15 +42,20 @@ void ULandmarkComponent::BeginPlay()
     {
         FLandmarkInstanceData Data;
         Data.ID = ID.IsEmpty() ? GetName() : ID;
-        Data.DisplayName = DisplayName.IsEmpty() ? FText::FromString(GetName()) : DisplayName;
-        Data.WorldLocation = GetComponentLocation();
-        Data.Type = Type;
-        Data.VisualConfig = VisualConfig;
+        Data.Name = DisplayName.ToString();
+        if (Data.Name.IsEmpty()) Data.Name = GetName();
         
-        // No linked actor since we are about to destroy ourselves/deactivate
-        // Or if we want to support moving landmarks, we keep the component alive.
-        // For "Performance Optimized" static placement, we send WorldLocation and stop tracking.
-        Data.LinkedActor = nullptr; 
+        FVector Loc = GetComponentLocation();
+        Data.X = Loc.X;
+        Data.Y = Loc.Y;
+        
+        Data.Type = Type.ToString(); 
+        
+        Data.ZMin = MinVisibleHeight;
+        Data.ZMax = MaxVisibleHeight;
+        
+        // This component is usually attached to a specific actor (like a City)
+        Data.LinkedActor = GetOwner(); 
 
         Subsystem->RegisterLandmark(Data);
     }

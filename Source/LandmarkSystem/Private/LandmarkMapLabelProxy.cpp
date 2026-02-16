@@ -101,7 +101,10 @@ void ALandmarkMapLabelProxy::UpdateVisuals()
 			TextToDisplay = ID.IsEmpty() ? TEXT("Landmark") : ID;
 		}
 		LabelText->SetText(FText::FromString(TextToDisplay));
-		LabelText->SetTextRenderColor(VisualConfig.Color.ToFColor(true));
-		LabelText->SetWorldSize(100.0f * VisualConfig.BaseScale);
+		LabelText->SetText(FText::FromString(TextToDisplay));
+		// Color logic removed or hardcoded to White for now
+		LabelText->SetTextRenderColor(FColor::White); 
+		// Scale removed, hardcode to standard size
+		LabelText->SetWorldSize(100.0f); 
 	}
 }
