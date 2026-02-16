@@ -39,7 +39,7 @@ void ULandmarkCloudComponent::BeginPlay()
     }
 
     // Optimization: We don't need to exist anymore after dumping data.
-    // DestroyComponent(); // Optional
+    DestroyComponent();
 }
 
 void ULandmarkCloudComponent::ImportLandmarks(const TArray<FLandmarkInstanceData>& InLandmarks, bool bAppend)
