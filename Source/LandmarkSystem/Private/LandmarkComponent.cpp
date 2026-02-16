@@ -10,8 +10,8 @@ ULandmarkComponent::ULandmarkComponent()
     
     // Default config
     VisualConfig.BaseScale = 1.0f;
-    VisualConfig.MinVisibleZoom = 0.0f;
-    VisualConfig.MaxVisibleZoom = 1.0f;
+    VisualConfig.MinVisibleHeight = 0.0f;
+    VisualConfig.MaxVisibleHeight = 100000.0f;
 }
 
 void ULandmarkComponent::OnRegister()
