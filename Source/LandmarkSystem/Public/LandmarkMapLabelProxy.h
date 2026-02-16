@@ -35,6 +35,9 @@ public:
 
 	// Visual Components
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Landmark")
+	TObjectPtr<USceneComponent> SceneComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Landmark")
 	TObjectPtr<UBillboardComponent> Icon;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Landmark")
