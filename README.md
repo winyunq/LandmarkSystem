@@ -29,43 +29,31 @@ Each file (e.g., `Landmarks_64.json`) contains an **Array** of Landmark Objects.
 ```json
 [
   {
-    "ID": "Unique_ID_01",
-    "DisplayName": "Beijing (High Level)",
-    "WorldLocation": { "X": 10000, "Y": 20000, "Z": 100 },
-    "Type": "City", 
-    "VisualConfig": {
-      "BaseScale": 1.5,
-      "MinVisibleHeight": 2000.0,  
-      "MaxVisibleHeight": 100000.0,
-      "Color": { "R": 1.0, "G": 1.0, "B": 1.0, "A": 1.0 },
-      "Priority": 10
-    }
+    "Name": "Beijing",
+    "X": 10000.0,
+    "Y": 20000.0,
+    "ZMin": 2000.0,   // MinVisibleHeight
+    "ZMax": 100000.0, // MaxVisibleHeight
+    "Type": "City"
   },
   {
-    "ID": "Unique_ID_02",
-    "DisplayName": "Small Village (Low Level)",
-    "WorldLocation": { "X": 10500, "Y": 20500, "Z": 0 },
-    "Type": "City",
-    "VisualConfig": {
-      "BaseScale": 0.8,
-      "MinVisibleHeight": 0.0, 
-      "MaxVisibleHeight": 2000.0,
-      "Color": { "R": 0.8, "G": 0.8, "B": 0.8, "A": 1.0 },
-      "Priority": 5
-    }
+    "Name": "Small Village",
+    "X": 10500.0,
+    "Y": 20500.0,
+    "ZMin": 0.0,
+    "ZMax": 2000.0,
+    "Type": "Village"
   }
 ]
 ```
 
 ### Fields Explanation
-*   **`WorldLocation`**: Absolute world coordinates (UE units). Z is usually ground height.
-*   **`VisualConfig`**:
-    *   **`MinVisibleHeight` / `MaxVisibleHeight`**: The camera height range (Z-axis) where this label is visible.
-        *   e.g. `0 - 2000`: Visible only when close.
-        *   e.g. `4000 - 10000`: Visible only when far.
-        *   e.g. `0 - 100000`: Always visible.
-    *   **`BaseScale`**: Text size multiplier.
-*   **`Type`**: Enum String: `"Generic"`, `"City"`, `"Capital"`, `"Region"`, `"Mountain"`, `"River"`.
+*   **`Name`**: The specific display name (also serves as ID if unique).
+*   **`X`, `Y`**: World coordinates.
+*   **`ZMin`, `ZMax`**: The camera height range (Z-axis) for visibility.
+    *   `0 - 2000`: Low altitude (Detail)
+    *   `4000 - Infinity`: High altitude (Macro)
+*   **`Type`**: String parameter. Can be used for classification (e.g., "City", "Mountain").
 
 ### 3. Editor Workflow
 
@@ -137,6 +125,18 @@ void AMyCity::BeginPlay()
 
 ### 3. 设置过程化河流
 拖入 `LandmarkPathGenerator`，编辑 Spline 路径，设置 `BaseDisplayName` 为 "Yellow River"，设置 `Spacing` 为 5000。
+
+### 4. 指令系统集成 (RTS Commands Integration)
+系统支持基于**类型 (Type)** 的动态指令面板切换：
+*   **全局注册表**: `ULandmarkSubsystem` 维护 `Type -> URTSCommandGridAsset*` 的映射。
+*   **自动化配置**: 运行时扫描 `AORTSCityActor` 模板，自动提取并注册其 `CommandGrid`。
+*   **UI 联动**: `RTSCommanderGridWidget` 根据选中组的 `ActiveGroupKey` 自动向 Subsystem 请求对应的网格资产进行显示。
+
+### 5. 去重与 Representation 机制
+为了保持高性能，系统采用了 **"Spawn-on-Demand"** 策略：
+*   **模板认领**: 场景中放置的城市 Actor 仅作为配置模板。
+*   **物理去重**: 启动时 `Subsystem` 识别模板后会将其 `Destroy()`，并根据 JSON 数据由 `MassBattleAgentSubsystem` 统一生成 Entity。
+*   **Representation**: 城市 Actor 全程由 Mass 托管，仅在满足 LOD 条件时动态显示，防止冗余运行。
 
 ## License
 MIT License. See LICENSE file.

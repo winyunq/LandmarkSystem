@@ -1,7 +1,34 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "MassEntityTypes.h"
+#include "MassEntityHandle.h"
+#include "MassCommonFragments.h"
 #include "LandmarkTypes.generated.h"
+
+// --- Landmark SubType Definitions (Global IDs 0-99) ---
+// Reserved 10-15 for Cities to avoid conflict with standard units (0-9)
+#define LandmarkSubType_City    10
+#define LandmarkSubType_City1   11
+#define LandmarkSubType_City2   12
+#define LandmarkSubType_City3   13
+#define LandmarkSubType_City4   14
+#define LandmarkSubType_City5   15
+
+USTRUCT()
+struct LANDMARKSYSTEM_API FLandmarkFragment : public FMassFragment
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    FString LandmarkID;
+
+    UPROPERTY()
+    int32 VictoryPoints = 0;
+
+    UPROPERTY()
+    FVector VisualOffset = FVector::ZeroVector;
+};
 
 /** 
  * Type of landmark for categorization and visual styling 
@@ -83,6 +110,21 @@ struct FLandmarkInstanceData
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     TWeakObjectPtr<AActor> LinkedActor = nullptr;
+
+    // Victory Points or Value (e.g. 5 points)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    int32 Value = 0;
+
+    // Visual Offset for the label (e.g. to raise it above the city mesh)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FVector VisualOffset = FVector::ZeroVector;
+
+    // Mass Entity Handle (not reflected, runtime only)
+    FMassEntityHandle EntityHandle;
+
+    // Visual Template for Mass Representative
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TSoftClassPtr<AActor> RepresentationClass;
 
     FLandmarkInstanceData() {}
     

@@ -3,16 +3,18 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "LandmarkTypes.h"
+#include "MassAPIStructs.h"
 #include "LandmarkSubsystem.generated.h"
+
+DECLARE_LOG_CATEGORY_EXTERN(LogLandmarkSystem, Log, All);
 
 /**
  * ULandmarkSubsystem
  * 
- * Central manager for the Landmark System.
- * - Manages registration of landmarks from various sources (JSON, Actors, Splines).
- * - Filters visible landmarks based on Camera View.
- * - Calculates adaptive scaling (Anti-intuitive scaling).
- * - Provides draw data for HUD/Canvas.
+ * 地标系统核心子系统。
+ * - 从 JSON 加载地标数据 (Landmark = HUD 层)
+ * - 基于配置批量生成城市 Mass 实体 (City = 渲染层)
+ * - 两者通过 XY 坐标 + FLandmarkFragment 铆钉
  */
 UCLASS()
 class LANDMARKSYSTEM_API ULandmarkSubsystem : public UWorldSubsystem
@@ -22,81 +24,88 @@ class LANDMARKSYSTEM_API ULandmarkSubsystem : public UWorldSubsystem
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
-    virtual void OnWorldBeginPlay(UWorld& InWorld) override;
+	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
 	// --- Registration API ---
-
-	/** Register a new landmark. Returns a generated ID if input ID is empty */
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
 	void RegisterLandmark(const FLandmarkInstanceData& Data);
 
-	/** Update an existing landmark's data */
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
 	void UpdateLandmark(const FString& ID, const FLandmarkInstanceData& NewData);
 
-	/** Unregister a landmark */
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
 	void UnregisterLandmark(const FString& ID);
 
-	/** Clear all landmarks */
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
 	void UnregisterAll();
 
-    // --- File I/O ---
+	// --- File I/O ---
+	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
+	bool LoadLandmarksFromFile(const FString& FileName);
 
-    /** Load landmarks from a JSON file (Relative to Project Content/MapData/) */
-    UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
-    bool LoadLandmarksFromFile(const FString& FileName);
-
-    /** Save landmarks to a JSON file (Relative to Project Content/MapData/) */
-    UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
-    bool SaveLandmarksToFile(const FString& FileName, const TArray<FLandmarkInstanceData>& DataToSave);
+	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
+	bool SaveLandmarksToFile(const FString& FileName, const TArray<FLandmarkInstanceData>& DataToSave);
 
 	// --- Runtime API ---
-
-	/** 
-	 * Call this every frame (or when camera moves) to update visibility and scaling 
-	 * @param CameraLocation - World location of the camera
-	 * @param CameraRotation - World rotation of the camera
-	 * @param FOV - Field of view
-	 * @param ZoomFactor - 0.0 (Ground) to 1.0 (Space). Used for adaptive scaling.
-	 */
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
 	void UpdateCameraState(const FVector& CameraLocation, const FRotator& CameraRotation, float FOV, float ZoomFactor);
 
-	/**
-	 * Helper to project world to screen and get render data.
-	 * Can be called by HUD to draw.
-	 */
+	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
+	void DrawLandmarks(class UCanvas* InCanvas);
+
 	void GetVisibleLandmarks(TArray<FLandmarkInstanceData>& OutVisibleLandmarks, TArray<FVector2D>& OutScreenPositions, TArray<float>& OutScales, TArray<float>& OutAlphas);
 
-	// --- Configuration ---
+	// --- Command Grid Mapping ---
+	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
+	void RegisterTypeGrid(const FString& Type, class URTSCommandGridAsset* GridAsset);
 
-	/** Curve defining Scale vs ZoomFactor */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "LandmarkSystem")
+	class URTSCommandGridAsset* GetGridByType(const FString& Type) const;
+
+	/** 根据 Mass 实体句柄反向查询城市类型 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "LandmarkSystem")
+	FString FindTypeByEntity(FEntityHandle Handle) const;
+
+	// --- Configuration ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LandmarkSystem")
 	FRuntimeFloatCurve ScaleCurve;
 
-	/** Curve defining Opacity vs ZoomFactor */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LandmarkSystem")
 	FRuntimeFloatCurve AlphaCurve;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LandmarkSystem")
+	TObjectPtr<UFont> NameFont;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LandmarkSystem")
+	TObjectPtr<UFont> VPFont;
+
 protected:
-	
-	/** Main storage */
 	UPROPERTY()
 	TMap<FString, FLandmarkInstanceData> RegisteredLandmarks;
 
-	/** Cached visible set from last UpdateCameraState */
 	TArray<FString> VisibleLandmarkIDs;
 	TArray<FVector2D> CachedScreenPositions;
 	TArray<float> CachedScales;
 	TArray<float> CachedAlphas;
 
-	/** Camera state cache */
+	UPROPERTY()
+	TMap<FString, TObjectPtr<class URTSCommandGridAsset>> TypeGridAssets;
+
+	TMap<FIntPoint, TArray<FString>> SpatialGrid;
+
+	float SpatialCellSize = 10000.0f;
+	void RebuildSpatialGrid();
+
+private:
+	/** 批量生成所有城市类型的 Mass 实体，通过 ULandmarkSettings 读取配置 */
+	void BatchSpawnAllCities();
+
+	/** 按类型名批量生成一组城市实体，返回句柄数组 */
+	TArray<FEntityHandle> BatchSpawnCityType(const FString& TypeName, const TArray<FVector>& Locations, int32 Team = 0);
+
 	FVector LastCameraLoc;
 	FRotator LastCameraRot;
 	float LastZoomFactor = 0.5f;
 
-	/** Internal helper to project */
 	bool ProjectWorldLocationToScreen(const FVector& WorldLocation, FVector2D& OutScreenPosition) const;
 };

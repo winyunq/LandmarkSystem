@@ -14,7 +14,17 @@ public class LandmarkSystem : ModuleRules
                 "Engine",
                 "Slate",
                 "SlateCore",
-                "UMG"
+                "UMG",
+                "Json",
+                "JsonUtilities",
+                "MassEntity",
+                "MassCommon",
+                "MassRepresentation",
+                "MassLOD",
+                "MassAPI",
+                "MassBattle",
+                "RTSCommandSystem",
+                "DeveloperSettings"
 			}
 		);
 			
