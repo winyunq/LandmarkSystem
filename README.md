@@ -81,7 +81,9 @@ Each file (e.g., `Landmarks_64.json`) contains an **Array** of Landmark Objects.
 
 ### 3. 高性能渲染 (High Performance Rendering)
 *   **视锥剔除 (Frustum Culling)**: 每帧计算，仅处理屏幕内的地标。
-*   **Canvas 批处理**: 避免为每个标签创建庞大的 UMG Widget。直接在 `HUD::DrawHUD` 中利用 `Canvas->DrawText` 进行极速绘制，轻松支持同屏数百个标签。
+*   **运行时缓存 (Runtime Cache)**: `ULandmarkSubsystem` 缓存可见地标、屏幕位置、缩放和透明度，避免相机稳定时重复计算。
+*   **Canvas 回退路径 (Canvas Fallback)**: 当前运行时仍通过 `HUD::DrawHUD` / `UCanvas` 绘制标签。该路径避免了大量 UMG Widget，但文本测量和提交仍在 CPU 每帧发生。
+*   **GPU 化路线 (GPU Roadmap)**: 后续应将地名文本缓存为图集，并通过批量 quad/material 渲染。详细计划见 `Docs/GPU_LANDMARK_LABEL_RENDERING.md`。
 
 ## 技术架构 (Architecture)
 
