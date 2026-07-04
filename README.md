@@ -54,6 +54,7 @@ Each file (e.g., `Landmarks_64.json`) contains an **Array** of Landmark Objects.
     *   `0 - 2000`: Low altitude (Detail)
     *   `4000 - Infinity`: High altitude (Macro)
 *   **`Type`**: String parameter. Can be used for classification (e.g., "City", "Mountain").
+*   **`Team`**: Optional integer team owner. Defaults to `0` when omitted.
 
 ### 3. Editor Workflow
 
@@ -139,6 +140,27 @@ void AMyCity::BeginPlay()
 *   **模板认领**: 场景中放置的城市 Actor 仅作为配置模板。
 *   **物理去重**: 启动时 `Subsystem` 识别模板后会将其 `Destroy()`，并根据 JSON 数据由 `MassBattleAgentSubsystem` 统一生成 Entity。
 *   **Representation**: 城市 Actor 全程由 Mass 托管，仅在满足 LOD 条件时动态显示，防止冗余运行。
+
+### 6. 初始场景单位放置 (Initial Scene Unit Placement)
+LandmarkSystem 现在承担两类初始单位放置职责：
+
+*   **地图数据批量点位**: JSON 中的每个地标表示一个单点单位或建筑。适合“一个单位，大量点”的地图初始化，例如城市、据点、资源点。`Type` 决定使用哪个 `MassConfig`，`Team` 决定生成阵营。
+*   **场景代理批量单位**: `MassUnitInHere` 是可直接摆在关卡里的编辑器代理 Actor。它表示“一个点，大量单位”，适合初始军团、防守部队、测试战斗编队等。
+
+运行时流程：
+
+1.  `ULandmarkSubsystem` 加载 `Content/MapData/Landmarks_<MapName>.json`。
+2.  按 `(Type, Team)` 分组。
+3.  通过 `ULandmarkSettings::CityLevelConfigs` 查找 `MassConfig`。
+4.  将每个点生成对应 Team 的 Mass Entity。
+
+`MassUnitInHere` 不依赖 JSON。它在 `BeginPlay` 按自身位置、旋转、数量、间距和 Team 生成一组 Mass Entity，然后销毁自身。
+
+当前约定：
+
+*   JSON 路线用于大量离散地图点。
+*   `MassUnitInHere` 路线用于少量手工摆放的局部编队。
+*   Team 颜色、地图边界等共享数据后续应接入每地图配置协议，而不是硬编码在 LandmarkSystem 内部。
 
 ## License
 MIT License. See LICENSE file.

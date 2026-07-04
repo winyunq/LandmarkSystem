@@ -25,5 +25,19 @@
 			"Type": "Editor",
 			"LoadingPhase": "PostEngineInit"
 		}
+	],
+	"Plugins": [
+		{
+			"Name": "MassGameplay",
+			"Enabled": true
+		},
+		{
+			"Name": "MassBattle",
+			"Enabled": true
+		},
+		{
+			"Name": "OpenRTSCamera",
+			"Enabled": true
+		}
 	]
 }

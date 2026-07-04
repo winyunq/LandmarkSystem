@@ -12,6 +12,9 @@
 #include "Subsystems/MassBattleAgentSubsystem.h"
 #include "DataAssets/MassBattleAgentConfigDataAsset.h"
 #include "MassBattleStructs.h"
+#include "MassEntityManager.h"
+#include "MassCommonFragments.h"
+#include "MassEntityUtils.h"
 
 DEFINE_LOG_CATEGORY(LogLandmarkSystem);
 
@@ -88,33 +91,41 @@ void ULandmarkSubsystem::BatchSpawnAllCities()
         return;
     }
 
-    // 按城市等级分组收集坐标
-    TMap<FString, TArray<FVector>> TypeToLocations;
+    // 按城市等级和阵营分组收集坐标。
+    // 地标 JSON 是“单个单位，大量点”；MassUnitInHere 是“一个点，大量单位”。
+    TMap<FString, TMap<int32, TArray<FVector>>> TypeTeamToLocations;
     for (auto& Pair : RegisteredLandmarks)
     {
         FLandmarkInstanceData& Data = Pair.Value;
         if (Data.Value == 0) Data.Value = GetDefaultVictoryPoints(Data.Type);
-        TypeToLocations.FindOrAdd(Data.Type).Add(FVector(Data.X, Data.Y, 0.0f));
+        TypeTeamToLocations.FindOrAdd(Data.Type).FindOrAdd(Data.Team).Add(Data.GetLocation());
     }
 
-    // 每个等级批量生成一次
+    // 每个等级、每个阵营批量生成一次
     for (const FCityLevelConfig& Cfg : Settings->CityLevelConfigs)
     {
-        TArray<FVector>* Locations = TypeToLocations.Find(Cfg.TypeName);
-        if (!Locations || Locations->Num() == 0) continue;
+        TMap<int32, TArray<FVector>>* TeamToLocations = TypeTeamToLocations.Find(Cfg.TypeName);
+        if (!TeamToLocations) continue;
 
-        TArray<FEntityHandle> Handles = BatchSpawnCityType(Cfg.TypeName, *Locations);
-        UE_LOG(LogLandmarkSystem, Warning, TEXT("LandmarkSubsystem: [%s] Spawned %d/%d entities."),
-            *Cfg.TypeName, Handles.Num(), Locations->Num());
-
-        // 将 Handle 写回 RegisteredLandmarks
-        int32 HandleIdx = 0;
-        for (auto& Pair : RegisteredLandmarks)
+        for (auto& TeamPair : *TeamToLocations)
         {
-            if (HandleIdx >= Handles.Num()) break;
-            if (Pair.Value.Type.Equals(Cfg.TypeName, ESearchCase::IgnoreCase))
+            const int32 Team = TeamPair.Key;
+            TArray<FVector>& Locations = TeamPair.Value;
+            if (Locations.Num() == 0) continue;
+
+            TArray<FEntityHandle> Handles = BatchSpawnCityType(Cfg.TypeName, Locations, Team);
+            UE_LOG(LogLandmarkSystem, Warning, TEXT("LandmarkSubsystem: [%s Team %d] Spawned %d/%d entities."),
+                *Cfg.TypeName, Team, Handles.Num(), Locations.Num());
+
+            // 将 Handle 写回 RegisteredLandmarks
+            int32 HandleIdx = 0;
+            for (auto& Pair : RegisteredLandmarks)
             {
-                Pair.Value.EntityHandle = Handles[HandleIdx++];
+                if (HandleIdx >= Handles.Num()) break;
+                if (Pair.Value.Type.Equals(Cfg.TypeName, ESearchCase::IgnoreCase) && Pair.Value.Team == Team)
+                {
+                    Pair.Value.EntityHandle = Handles[HandleIdx++];
+                }
             }
         }
     }
@@ -161,7 +172,7 @@ TArray<FEntityHandle> ULandmarkSubsystem::BatchSpawnCityType(
 
         TArray<FEntityHandle> Handles = AgentSub->SpawnAgentsByTemplateRectangular(
             BaseTemplate, 1, Team, SpawnPos, ShapeData,
-            FVector2D::ZeroVector, EInitialDirection::CustomDirection, FVector2D::ZeroVector
+            FVector2D::ZeroVector, EInitialRotation::CustomRotation, FRotator::ZeroRotator
         );
         AllHandles.Append(Handles);
     }
@@ -304,14 +315,9 @@ bool ULandmarkSubsystem::LoadLandmarksFromFile(const FString& FileName)
                 FLandmarkInstanceData Data;
                 FJsonObjectConverter::JsonObjectToUStruct((*ObjectPtr).ToSharedRef(), &Data);
                 
-                // Coordinate System Fix:
-                // JSON Data (GIS/Screen): X=Right(East), Y=Up(North)
-                // Unreal Engine: X=Forward(North), Y=Right(East)
-                // Mapping: UE.X = Json.Y, UE.Y = Json.X
-                double JsonX = Data.X;
-                double JsonY = Data.Y;
-                Data.X = JsonY; 
-                Data.Y = JsonX; 
+                // Correct Coordinate System Mapping: X=Forward(North), Y=Right(East)
+                Data.X = (double)(*ObjectPtr)->GetNumberField(TEXT("Y")); 
+                Data.Y = (double)(*ObjectPtr)->GetNumberField(TEXT("X"));
                 
                 // Fallback ID
                 if (Data.ID.IsEmpty()) Data.ID = FGuid::NewGuid().ToString();
@@ -320,12 +326,6 @@ bool ULandmarkSubsystem::LoadLandmarksFromFile(const FString& FileName)
                 if (Data.Value == 0)
                 {
                     Data.Value = GetDefaultVictoryPoints(Data.Type);
-                }
-                
-                // Default Z-offset for JSON elements
-                if (Data.VisualOffset.IsNearlyZero())
-                {
-                    Data.VisualOffset = FVector(0.0f, 0.0f, 500.0f);
                 }
 
                 RegisterLandmark(Data);
@@ -439,6 +439,14 @@ void ULandmarkSubsystem::UpdateCameraState(const FVector& CameraLocation, const 
 
     FIntPoint CenterCell(FMath::FloorToInt(CameraLocation.X / SpatialCellSize), FMath::FloorToInt(CameraLocation.Y / SpatialCellSize));
     
+    // --- Flat UI Layer Strategy (Glass Layer) ---
+    // Cache the unified Z once outside the loops to maximize performance.
+    float UnifiedZ = 147.0f;
+    if (const ULandmarkSettings* Settings = ULandmarkSettings::Get())
+    {
+        UnifiedZ = Settings->CityLabelZOffset;
+    }
+
     // Iterate neighbor cells
     for (int32 x = -CellRadius; x <= CellRadius; ++x)
     {
@@ -462,26 +470,33 @@ void ULandmarkSubsystem::UpdateCameraState(const FVector& CameraLocation, const 
                         continue;
                     }
 
-                    // 1. Precise Logic
-                    FVector Location = Data.GetLocation();
-                    
-                    if (Data.LinkedActor.IsValid())
-                    {
-                        Location = Data.LinkedActor->GetActorLocation();
-                    }
+                    FVector FinalLocation(Data.X, Data.Y, UnifiedZ);
 
-                    // Use Manual Offset (Configured to City Top)
-                    FVector FinalOffset = Data.VisualOffset;
-                    
-                    Location += FinalOffset;
                     // 2. Project
                     FVector2D ScreenPos;
-                    if (ProjectWorldLocationToScreen(Location, ScreenPos))
+                    if (ProjectWorldLocationToScreen(FinalLocation, ScreenPos))
                     {
                         VisibleLandmarkIDs.Add(ID);
                         CachedScreenPositions.Add(ScreenPos);
-                        CachedScales.Add(1.0f);
-                        CachedAlphas.Add(1.0f);
+
+                        // --- Dynamic Scaling ---
+                        // Evaluate scale based on distance using curve
+                        float ScaleFactor = 1.0f;
+                        if (ScaleCurve.GetRichCurve() && !ScaleCurve.GetRichCurve()->IsEmpty())
+                        {
+                            float Distance = FVector::Dist(CameraLocation, FinalLocation);
+                            ScaleFactor = ScaleCurve.GetRichCurve()->Eval(Distance);
+                        }
+                        CachedScales.Add(ScaleFactor);
+
+                        // --- Alpha Fading ---
+                        float AlphaFactor = 1.0f;
+                        if (AlphaCurve.GetRichCurve() && !AlphaCurve.GetRichCurve()->IsEmpty())
+                        {
+                            float Distance = FVector::Dist(CameraLocation, FinalLocation);
+                            AlphaFactor = AlphaCurve.GetRichCurve()->Eval(Distance);
+                        }
+                        CachedAlphas.Add(AlphaFactor);
                     }
                 }
             }
@@ -528,9 +543,16 @@ void ULandmarkSubsystem::DrawLandmarks(UCanvas* InCanvas)
         const FLandmarkInstanceData& Data = *DataPtr;
         const FVector2D& ScreenPos = CachedScreenPositions[i];
         
-        // --- 2x Scale ---
+        // --- Scale Calculation ---
         float OriginalScale = CachedScales[i];
-        float VisualScale = OriginalScale * 2.0f; // Scale up for visibility
+        float SettingsBaseScale = 1.0f;
+        if (const ULandmarkSettings* Settings = ULandmarkSettings::Get())
+        {
+            SettingsBaseScale = Settings->BaseFontScale;
+        }
+
+        // Apply base scale from settings + dynamic scale from curve
+        float VisualScale = OriginalScale * SettingsBaseScale; 
         float Alpha = CachedAlphas[i];
         
         if (Alpha <= 0.01f) continue;

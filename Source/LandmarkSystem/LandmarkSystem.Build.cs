@@ -17,13 +17,14 @@ public class LandmarkSystem : ModuleRules
                 "UMG",
                 "Json",
                 "JsonUtilities",
+                "MassCore",
                 "MassEntity",
                 "MassCommon",
                 "MassRepresentation",
                 "MassLOD",
                 "MassAPI",
                 "MassBattle",
-                "RTSCommandSystem",
+                "OpenRTSCamera",
                 "DeveloperSettings"
 			}
 		);

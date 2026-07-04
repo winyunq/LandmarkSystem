@@ -115,6 +115,10 @@ struct FLandmarkInstanceData
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     int32 Value = 0;
 
+    // Team ownership for scene initialization and Mass spawning.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    int32 Team = 0;
+
     // Visual Offset for the label (e.g. to raise it above the city mesh)
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FVector VisualOffset = FVector::ZeroVector;

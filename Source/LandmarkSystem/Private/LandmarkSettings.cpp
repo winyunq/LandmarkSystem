@@ -2,7 +2,8 @@
 
 ULandmarkSettings::ULandmarkSettings()
 {
-    CityLabelZOffset = 147.0f;
+    CityLabelZOffset = 147.0f; // Adjusted to be high enough for map labels
+    BaseFontScale = 1.0f;
 
     static const FString DefaultConfigPath = TEXT("/Game/Unit/Actor/Building/City/Gen_SK_Flag_A/AgentConfig_SK_Flag_A.AgentConfig_SK_Flag_A");
 

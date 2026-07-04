@@ -46,7 +46,11 @@ public:
 
 	/** 城市 HUD 标签统一 Z 偏移（相对于城市 XY 坐标，标签显示在地标上方多少单位） */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "City Configs")
-	float CityLabelZOffset = 1500.0f;
+	float CityLabelZOffset = 147.0f;
+
+	/** 标签基础缩放比例，避免代码中硬编码魔数 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "City Configs")
+	float BaseFontScale = 1.0f;
 
 	/** City1~City5 各等级的配置，按等级顺序排列 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "City Configs",
