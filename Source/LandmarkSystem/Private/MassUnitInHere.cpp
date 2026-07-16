@@ -71,7 +71,13 @@ void AMassUnitInHere::BeginPlay()
 
 	FAgentSpawnRectangleShapeData Shape;
 	const float SideCount = FMath::CeilToFloat(FMath::Sqrt(static_cast<float>(SafeQuantity)));
-	const float RegionSize = FMath::Max(SpawnSpacing, (SideCount - 1.0f) * SpawnSpacing);
+	// A one-unit placement actor is a point placement, not a one-cell formation.
+	// A Region equal to Spacing produces four candidates at +/-Spacing/2 and the
+	// Mass spawner chooses one of them, so repeated UnitHere runs visibly jitter.
+	// An invalid/zero region follows MassBattleFrame's documented origin path.
+	const float RegionSize = SafeQuantity == 1
+		? 0.0f
+		: FMath::Max(SpawnSpacing, (SideCount - 1.0f) * SpawnSpacing);
 	Shape.Region = FVector2D(RegionSize, RegionSize);
 	Shape.Spacing = FVector2D(SpawnSpacing, SpawnSpacing);
 
