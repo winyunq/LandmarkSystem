@@ -89,11 +89,23 @@ struct FLandmarkInstanceData
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString Name;
 
+    /**
+     * Optional per-culture display names. Keys use Unreal/IETF culture names
+     * such as "en", "zh-Hans", "zh-Hant", "ja", "ko", or "ru".
+     * This is presentation-only data and must never be used as landmark identity.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark|Localization")
+    TMap<FString, FString> LocalizedNames;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     double X = 0.0;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     double Y = 0.0;
+
+    /** World-space height used when spawning the landmark's Mass entity. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    double SpawnZ = 0.0;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     double ZMin = 0.0; // MinVisibleHeight
@@ -119,6 +131,33 @@ struct FLandmarkInstanceData
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     int32 Team = 0;
 
+	/**
+	 * Total factory count owned by this city. At map load it is never lower
+	 * than the city's Victory Point value; physically constructed factories
+	 * are added on top of that intrinsic capacity.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "City|Economy", meta = (ClampMin = "0"))
+	int32 FactoryCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "City|Development")
+	bool bIsCapital = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "City|Development")
+	bool bHasBase = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "City|Development")
+	bool bHasUniversity = false;
+
+	/** Runtime/save-friendly locations for structures placed through the city command card. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "City|Development")
+	FVector CapitalBaseLocation = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "City|Development")
+	FVector UniversityLocation = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "City|Economy")
+	TArray<FVector> FactoryLocations;
+
     // Visual Offset for the label (e.g. to raise it above the city mesh)
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FVector VisualOffset = FVector::ZeroVector;
@@ -132,5 +171,5 @@ struct FLandmarkInstanceData
 
     FLandmarkInstanceData() {}
     
-    FVector GetLocation() const { return FVector(X, Y, 0.0); }
+    FVector GetLocation() const { return FVector(X, Y, SpawnZ); }
 };

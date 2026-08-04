@@ -38,6 +38,10 @@
 		{
 			"Name": "OpenRTSCamera",
 			"Enabled": true
+		},
+		{
+			"Name": "FogOfWar",
+			"Enabled": true
 		}
 	]
 }

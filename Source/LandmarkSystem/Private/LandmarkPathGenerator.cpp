@@ -39,6 +39,7 @@ void ALandmarkPathGenerator::GenerateLandmarks()
 		Data.Name = BaseDisplayName.ToString();
 		Data.X = Location.X;
         Data.Y = Location.Y;
+		Data.SpawnZ = Location.Z;
 		if (const UEnum* EnumPtr = StaticEnum<ELandmarkType>())
         {
             Data.Type = EnumPtr->GetNameStringByValue((int64)Type);

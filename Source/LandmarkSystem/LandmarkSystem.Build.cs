@@ -24,7 +24,11 @@ public class LandmarkSystem : ModuleRules
                 "MassLOD",
                 "MassAPI",
                 "MassBattle",
-                "OpenRTSCamera",
+                "MassBattleISKM",
+                "RHI",
+				"RenderCore",
+                "FogOfWar",
+                "RTSInputSystem",
                 "DeveloperSettings"
 			}
 		);

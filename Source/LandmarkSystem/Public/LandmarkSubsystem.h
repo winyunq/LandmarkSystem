@@ -7,6 +7,10 @@
 #include "LandmarkSubsystem.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogLandmarkSystem, Log, All);
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnLandmarkTeamChangedNative, const FLandmarkInstanceData&, int32, int32);
+
+struct FRTSSelectionView;
+struct FRTSUnitData;
 
 /**
  * ULandmarkSubsystem
@@ -17,7 +21,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogLandmarkSystem, Log, All);
  * - 两者通过 XY 坐标 + FLandmarkFragment 铆钉
  */
 UCLASS()
-class LANDMARKSYSTEM_API ULandmarkSubsystem : public UWorldSubsystem
+class LANDMARKSYSTEM_API ULandmarkSubsystem : public UTickableWorldSubsystem
 {
 	GENERATED_BODY()
 
@@ -25,6 +29,12 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
+	virtual void Tick(float DeltaTime) override;
+	virtual TStatId GetStatId() const override;
+	virtual bool IsTickable() const override;
+
+	/** Native notification used by the game economy when a Mass city changes owner. */
+	FOnLandmarkTeamChangedNative OnLandmarkTeamChangedNative;
 
 	// --- Registration API ---
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
@@ -66,6 +76,38 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "LandmarkSystem")
 	FString FindTypeByEntity(FEntityHandle Handle) const;
 
+	/**
+	 * Resolve one landmark name for a culture. An empty culture uses this
+	 * client's current Unreal culture, so network players can see different
+	 * names without replicating presentation text.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "LandmarkSystem|Localization")
+	FString GetLandmarkDisplayName(
+		const FString& LandmarkID,
+		const FString& CultureName = FString()) const;
+
+	/** Runtime lookup helpers for pure-Mass city gameplay (no Actor per city required). */
+	const FLandmarkInstanceData* FindLandmarkByEntity(FEntityHandle Handle) const;
+	FLandmarkInstanceData* FindMutableLandmarkByEntity(FEntityHandle Handle);
+	const FLandmarkInstanceData* FindLandmarkByID(const FString& ID) const;
+	FLandmarkInstanceData* FindMutableLandmarkByID(const FString& ID);
+	const TMap<FString, FLandmarkInstanceData>& GetRegisteredLandmarks() const { return RegisteredLandmarks; }
+	uint32 GetLandmarkRevision() const { return LandmarkRevision; }
+	void SetCapitalCity(const FString& LandmarkID, int32 TeamIndex);
+
+	/** Change a live Mass city's owner while keeping its fragment, tags and HUD data in sync. */
+	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem|Ownership")
+	bool TransferLandmarkTeam(const FString& LandmarkID, int32 NewTeamIndex);
+
+	UFUNCTION(BlueprintPure, Category = "LandmarkSystem|Economy")
+	float GetFactoryBuildCost(const FString& Type) const;
+
+	UFUNCTION(BlueprintPure, Category = "LandmarkSystem|Economy")
+	float GetGDPPerFactoryPerSettlement(const FString& Type) const;
+
+	/** Development-only validation hook used by Landmark.DebugCaptureFirstCity. */
+	bool DebugCaptureFirstCity(int32 CapturingTeam);
+
 	// --- Configuration ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LandmarkSystem")
 	FRuntimeFloatCurve ScaleCurve;
@@ -106,6 +148,34 @@ private:
 	FVector LastCameraLoc;
 	FRotator LastCameraRot;
 	float LastZoomFactor = 0.5f;
+	float OwnershipPollAccumulator = 0.0f;
+	float OwnershipPollInterval = 0.25f;
+	int32 ActiveFlagSetIndex = 0;
+
+	/** Gameplay City -> attached visual flag Agent. The gameplay entity keeps the one-cell base. */
+	TMap<FEntityHandle, FEntityHandle> CityFlagEntities;
+
+	/** Previous gameplay health used to mirror real damage onto the visual-only flag Agent. */
+	TMap<FEntityHandle, float> CityHealthSamples;
+
+	FDelegateHandle CommandGridResolverHandle;
+	FDelegateHandle UnitDataEnricherHandle;
+	uint32 LandmarkRevision = 1;
+
+	void BumpLandmarkRevision();
+	void ResolveMassCommandGrid(UObject* WorldContextObject, const FString& ActiveKey, const FRTSSelectionView& SelectionView, class URTSCommandGridAsset*& OutGrid);
+	void EnrichMassUnitData(UObject* WorldContextObject, const FEntityHandle& Entity, FRTSUnitData& Data);
+	void PollCityOwnership();
+	void SyncCityFlagHitAnimations();
+	void UpdateCityFlagTeam(const FEntityHandle& CityEntity, int32 NewTeamIndex);
+	void TriggerCityFlagUpdateAnimation(const FEntityHandle& Entity);
+	void TriggerCityFlagHitAnimation(const FEntityHandle& Entity);
+	FString ResolveLandmarkDisplayName(
+		const FLandmarkInstanceData& Data,
+		const FString& CultureName = FString()) const;
+	void ApplyCityNameLocalizationTable(
+		const FString& LandmarkFileName,
+		TArray<FLandmarkInstanceData>& Landmarks) const;
 
 	bool ProjectWorldLocationToScreen(const FVector& WorldLocation, FVector2D& OutScreenPosition) const;
 };

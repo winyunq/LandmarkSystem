@@ -19,6 +19,54 @@
     *   Click **`Load From Json`** to load existing data from disk (if any).
     *   Click **`Save To Json`** to save your changes to the file.
 
+### Runtime loading
+
+Runtime JSON loading is fail-closed and keyed by the level's canonical package path. Add one
+`MapProfiles` entry in **Project Settings > Plugins > Landmark System** for each level that owns
+landmark data, and bind it to exactly one JSON file under `Content/MapData/`. A level without an
+exact profile loads no file-backed landmarks. A missing or invalid bound file also leaves the
+file-backed landmark set empty; there is no shared/default-file fallback.
+
+### Multilingual city names
+
+City identity, ownership, coordinates, and Mass replication are culture-neutral. Only the
+client-side display name is localized, so players connected to the same match may use different
+languages. The current Unreal culture is evaluated when visible landmark data is requested and
+when Canvas labels are drawn; a runtime culture change therefore takes effect without respawning
+cities.
+
+Two compatible data layouts are supported:
+
+1. Culture-specific full files. Place files at paths such as
+   `Content/MapData/zh-Hans/Landmarks_EastAsia_64.json` and
+   `Content/MapData/en/Landmarks_EastAsia_64.json`. The subsystem tries the exact culture, the
+   Chinese script fallback (`zh-Hans`/`zh-Hant`), then the base language before using the map
+   profile's base file.
+2. A unified sidecar table. Place `CityNames_AllLanguages.json` at
+   `Content/MapData/localization_table/` or change `CityNameLocalizationTableFile` in
+   **Project Settings > Plugins > Landmark System**. The expected format is the
+   `localization_table/CityNames_AllLanguages.json` file from the multilingual city package.
+
+Individual landmark JSON objects may also contain a `LocalizedNames` map:
+
+```json
+{
+  "ID": "city_beijing",
+  "Name": "Beijing",
+  "LocalizedNames": {
+    "zh-Hans": "北京",
+    "zh-Hant": "北京",
+    "ja": "北京"
+  }
+}
+```
+
+Keep `ID` stable across languages. When an imported record has no explicit `ID`, a
+culture-specific file uses the matching base-map name to reproduce the legacy identity hash; the
+localized display name never changes identity.
+Blueprint/UI code can call `GetLandmarkDisplayName`; `GetVisibleLandmarks` already returns a copy
+whose `Name` is localized for the current client.
+
 ## Data Format (JSON)
 
 We use standard Unreal Engine JSON serialization.
@@ -149,7 +197,7 @@ LandmarkSystem 现在承担两类初始单位放置职责：
 
 运行时流程：
 
-1.  `ULandmarkSubsystem` 加载 `Content/MapData/Landmarks_<MapName>.json`。
+1.  `ULandmarkSubsystem` 用完整关卡包路径精确查找 `MapProfiles`，并只加载该条目绑定的 `Content/MapData/*.json`；没有条目时不加载地标文件。
 2.  按 `(Type, Team)` 分组。
 3.  通过 `ULandmarkSettings::CityLevelConfigs` 查找 `MassConfig`。
 4.  将每个点生成对应 Team 的 Mass Entity。

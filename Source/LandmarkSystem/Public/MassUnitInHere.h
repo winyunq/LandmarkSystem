@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "MassEntityTypes.h"
 #include "MassUnitInHere.generated.h"
 
 class UMassBattleAgentConfigDataAsset;
@@ -26,6 +27,10 @@ protected:
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 public:
+	/** 是否启用这个场景代理。关闭时 BeginPlay 不生成单位，运行时直接移除自身，等同于临时注释掉。 */
+	UPROPERTY(EditAnywhere, Category = "Mass Unit In Here")
+	bool bSpawnEnabled = true;
+
 	/** Mass 单位配置 */
 	UPROPERTY(EditAnywhere, Category = "Mass Unit In Here")
 	TObjectPtr<UMassBattleAgentConfigDataAsset> AgentConfig;
@@ -46,6 +51,14 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mass Unit In Here", meta = (ClampMin = "1.0", UIMin = "1.0"))
 	float SpawnSpacing = 150.0f;
 
+	/** 大编队使用 MassBattleFrame 原生 deferred spawn 分帧创建，避免 BeginPlay 长时间锁死主线程。 */
+	UPROPERTY(EditAnywhere, Category = "Mass Unit In Here|Performance")
+	bool bDeferLargeSpawns = true;
+
+	/** 每个生成步骤的目标单位数；实际总步数由 Quantity 自动计算。 */
+	UPROPERTY(EditAnywhere, Category = "Mass Unit In Here|Performance", meta = (ClampMin = "1", UIMin = "1"))
+	int32 AgentsPerSpawnStep = 250;
+
 	UPROPERTY(EditAnywhere, Category = "Mass Unit In Here")
 	bool bOverrideHealthBarVisibility = false;
 
@@ -61,4 +74,8 @@ private:
 	TObjectPtr<UStaticMeshComponent> PreviewMeshComponent;
 
 	void UpdatePreview();
+	void ApplySpawnOverrides(const TArray<FEntityHandle>& SpawnedEntities);
+
+	UFUNCTION()
+	void HandleDeferredSpawnFinished(const TArray<FEntityHandle>& SpawnedEntities);
 };

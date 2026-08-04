@@ -45,6 +45,7 @@ void ALandmarkMapLabelProxy::BeginPlay()
         FVector Loc = GetActorLocation();
         Data.X = Loc.X;
         Data.Y = Loc.Y;
+        Data.SpawnZ = Loc.Z;
         
 		// Convert Enum to String
         if (const UEnum* EnumPtr = StaticEnum<ELandmarkType>())

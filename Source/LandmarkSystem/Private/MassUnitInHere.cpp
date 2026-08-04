@@ -43,7 +43,7 @@ void AMassUnitInHere::UpdatePreview()
 		return;
 	}
 
-	TSubclassOf<AMassBattleAgentRenderer> RendererClass = AgentConfig->Render.RendererClass.LoadSynchronous();
+	TSubclassOf<AMassBattleAgentRenderer> RendererClass = AgentConfig->Visualize.RendererClass.LoadSynchronous();
 	if (!RendererClass)
 	{
 		PreviewMeshComponent->SetStaticMesh(nullptr);
@@ -59,6 +59,13 @@ void AMassUnitInHere::UpdatePreview()
 void AMassUnitInHere::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (!bSpawnEnabled)
+	{
+		UE_LOG(LogTemp, Log, TEXT("MassUnitInHere [%s] spawn disabled; skipping Mass spawn."), *GetName());
+		Destroy();
+		return;
+	}
 
 	UWorld* World = GetWorld();
 	if (!World || !AgentConfig)
@@ -81,7 +88,36 @@ void AMassUnitInHere::BeginPlay()
 	Shape.Region = FVector2D(RegionSize, RegionSize);
 	Shape.Spacing = FVector2D(SpawnSpacing, SpawnSpacing);
 
-	TArray<FEntityHandle> SpawnedEntities = UMassBattleFuncLib::SpawnAgentsByConfigRectangular(
+	if (bDeferLargeSpawns && SafeQuantity > FMath::Max(1, AgentsPerSpawnStep))
+	{
+		const int32 SpawnStepCount = FMath::CeilToInt(
+			static_cast<float>(SafeQuantity) / static_cast<float>(FMath::Max(1, AgentsPerSpawnStep)));
+		const int32 Substeps = FMath::Max(1, SpawnStepCount - 1);
+
+		FOnAgentSpawnFinished OnFinished;
+		OnFinished.BindDynamic(this, &AMassUnitInHere::HandleDeferredSpawnFinished);
+		UMassBattleFuncLib::SpawnAgentsByConfigRectangularDeferred(
+			this,
+			AgentConfig,
+			SafeQuantity,
+			Team,
+			GetActorLocation(),
+			Shape,
+			FVector2D::ZeroVector,
+			EInitialRotation::CustomRotation,
+			GetActorRotation(),
+			FSpawnerMult(),
+			true,
+			Substeps,
+			OnFinished);
+
+		UE_LOG(LogTemp, Log,
+			TEXT("MassUnitInHere [%s] deferred spawn submitted: Quantity=%d Team=%d Steps=%d."),
+			*GetName(), SafeQuantity, Team, SpawnStepCount);
+		return;
+	}
+
+	const TArray<FEntityHandle> SpawnedEntities = UMassBattleFuncLib::SpawnAgentsByConfigRectangular(
 		this,
 		AgentConfig,
 		SafeQuantity,
@@ -90,8 +126,28 @@ void AMassUnitInHere::BeginPlay()
 		Shape,
 		FVector2D::ZeroVector,
 		EInitialRotation::CustomRotation,
-		GetActorRotation()
-	);
+		GetActorRotation());
+
+	ApplySpawnOverrides(SpawnedEntities);
+	Destroy();
+}
+
+void AMassUnitInHere::HandleDeferredSpawnFinished(const TArray<FEntityHandle>& SpawnedEntities)
+{
+	ApplySpawnOverrides(SpawnedEntities);
+	UE_LOG(LogTemp, Log,
+		TEXT("MassUnitInHere [%s] deferred spawn completed: Spawned=%d Team=%d."),
+		*GetName(), SpawnedEntities.Num(), Team);
+	Destroy();
+}
+
+void AMassUnitInHere::ApplySpawnOverrides(const TArray<FEntityHandle>& SpawnedEntities)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
 
 	if ((HealthOverride > 0.f || bOverrideHealthBarVisibility) && SpawnedEntities.Num() > 0)
 	{
@@ -122,6 +178,4 @@ void AMassUnitInHere::BeginPlay()
 			}
 		}
 	}
-
-	Destroy();
 }
