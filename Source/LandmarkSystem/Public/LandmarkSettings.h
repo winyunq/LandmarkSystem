@@ -48,7 +48,7 @@ struct FCityLevelConfig
 	TSoftObjectPtr<URTSCommandGridAsset> CommandGrid;
 
 	/**
-	 * 同一套 Native ISKM City 网格的视觉等级。不会改变 256uu 占地；
+	 * 同一套正式 City 表现的视觉等级。不会改变城市玩法占地；
 	 * 只通过 PerInstanceCustomData 显示对应的外城、中城和内城建筑层级。
 	 * 当前项目语义为 City1=最大城市（5），City5=最小城市（1）。
 	 */

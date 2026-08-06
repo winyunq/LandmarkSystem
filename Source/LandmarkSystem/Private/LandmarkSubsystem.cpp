@@ -50,7 +50,6 @@
 #include "Fragments/StyleType.h"
 #include "Fragments/Team.h"
 #include "Fragments/Transform.h"
-#include "Fragments/MassBattleISKMFragment.h"
 #include "FuncLibs/MassBattleFuncLib.h"
 #include "FuncLibs/MassBattleTagHelpers.h"
 #include "MassBattleEnums.h"
@@ -322,7 +321,7 @@ namespace
 				TEXT("UE GGameThreadTime + GRenderThreadTime + RHIGetGPUFrameCycles + platform wall frame interval"));
 			Root->SetStringField(
 				TEXT("render_backend"),
-				TEXT("MassBattleISKM; identical cloned AgentConfig in Single scenario"));
+				TEXT("Configured formal City presentation backend"));
 			Root->SetBoolField(TEXT("separate_process_per_scenario"), true);
 			Root->SetNumberField(TEXT("logical_cities"), LogicalCityCount);
 			Root->SetNumberField(TEXT("visual_agents"), VisualAgentCount);
@@ -641,20 +640,10 @@ TArray<FEntityHandle> ULandmarkSubsystem::BatchSpawnCityType(
 
 	if (ShouldUseSingleEntityCityTopology())
 	{
-		static const TCHAR* BenchmarkCityPath =
-			TEXT("/Game/MassBattle/City/Benchmark/City_SingleEntity_Benchmark.City_SingleEntity_Benchmark");
-		UMassBattleAgentConfigDataAsset* BenchmarkDataAsset =
-			LoadObject<UMassBattleAgentConfigDataAsset>(nullptr, BenchmarkCityPath);
-		if (!BenchmarkDataAsset)
-		{
-			UE_LOG(LogLandmarkSystem, Error,
-				TEXT("LandmarkSubsystem: single-entity City topology requires AgentConfig [%s]."),
-				BenchmarkCityPath);
-			return {};
-		}
-
+		// The configured City unit is authoritative for both gameplay and its
+		// selected presentation backend; benchmark assets must never override it.
 		FEntityTemplateData CityTemplate =
-			AgentSub->MakeAgentTemplateDataFromDataAsset(BenchmarkDataAsset);
+			AgentSub->MakeAgentTemplateDataFromDataAsset(DataAsset);
 		FMassEntityTemplateData* CityData = CityTemplate.Get();
 		if (!CityData)
 		{
@@ -673,19 +662,6 @@ TArray<FEntityHandle> ULandmarkSubsystem::BatchSpawnCityType(
 		{
 			Death->bEnable = false;
 		}
-		if (FVisualize* Visualize = CityData->GetMutableFragment<FVisualize>())
-		{
-			Visualize->bEnable = true;
-			Visualize->Transform.SetLocation(FVector3f::ZeroVector);
-			Visualize->Transform.SetRotation(FQuat4f::Identity);
-			Visualize->Transform.SetScale3D(FVector3f::OneVector);
-		}
-		if (FMassBattleISKMAddonFragment* ISKM =
-			CityData->GetMutableFragment<FMassBattleISKMAddonFragment>())
-		{
-			ISKM->bEnable = true;
-		}
-
 		if (UMassAPISubsystem* MassAPI = UMassAPISubsystem::GetPtr(this))
 		{
 			if (FMassEntityManager* EntityManager = MassAPI->GetEntityManager())
@@ -709,7 +685,7 @@ TArray<FEntityHandle> ULandmarkSubsystem::BatchSpawnCityType(
 				UMassBattleNetworkSubsystem::GetPtr(this))
 			{
 				CityData->AddFragment_GetRef<FNetworking>().Key =
-					FName(*(BenchmarkDataAsset->GetPathName()
+					FName(*(DataAsset->GetPathName()
 						+ TEXT("_CitySingle")));
 				CityData->AddTag<FNetworkTag>();
 				FEntityTemplateData RegisteredCityTemplate;
@@ -795,11 +771,6 @@ TArray<FEntityHandle> ULandmarkSubsystem::BatchSpawnCityType(
     {
         Visualize->bEnable = false;
     }
-    if (FMassBattleISKMAddonFragment* ISKM =
-        GameplayData->GetMutableFragment<FMassBattleISKMAddonFragment>())
-    {
-        ISKM->bEnable = false;
-    }
 
     // The attached entity is visual-only. Its source model already authors the
     // base at 16x16uu and the flag/pole at 64uu, so it is rendered 1:1. Keep the
@@ -813,11 +784,6 @@ TArray<FEntityHandle> ULandmarkSubsystem::BatchSpawnCityType(
         Visualize->Transform.SetLocation(FVector3f::ZeroVector);
         Visualize->Transform.SetRotation(FQuat4f::Identity);
         Visualize->Transform.SetScale3D(FVector3f::OneVector);
-    }
-    if (FMassBattleISKMAddonFragment* ISKM =
-        FlagData->GetMutableFragment<FMassBattleISKMAddonFragment>())
-    {
-        ISKM->bEnable = true;
     }
     if (FCollider* Collider = FlagData->GetMutableFragment<FCollider>())
     {

@@ -24,7 +24,6 @@ public class LandmarkSystem : ModuleRules
                 "MassLOD",
                 "MassAPI",
                 "MassBattle",
-                "MassBattleISKM",
                 "RHI",
 				"RenderCore",
                 "FogOfWar",
