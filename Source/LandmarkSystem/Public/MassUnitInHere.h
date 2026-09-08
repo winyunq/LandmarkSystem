@@ -22,6 +22,12 @@ class LANDMARKSYSTEM_API AMassUnitInHere : public AActor
 public:
 	AMassUnitInHere();
 
+	/**
+	 * Builds every enabled UnitHere actor in stable actor-name order during the
+	 * shared Tick-0 level-initialization phase. Returns completed formations.
+	 */
+	static int32 InitializeAllLevelUnits(UWorld& World);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -74,7 +80,11 @@ private:
 	TObjectPtr<UStaticMeshComponent> PreviewMeshComponent;
 
 	void UpdatePreview();
+	bool IsConfiguredCityUnit() const;
+	int32 ResolveMapFlagSetIndex() const;
+	bool InitializeLevelUnits(bool bForceSynchronous);
 	void ApplySpawnOverrides(const TArray<FEntityHandle>& SpawnedEntities);
+	bool bLevelUnitsInitialized = false;
 
 	UFUNCTION()
 	void HandleDeferredSpawnFinished(const TArray<FEntityHandle>& SpawnedEntities);

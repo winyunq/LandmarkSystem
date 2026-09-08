@@ -1,7 +1,12 @@
 #include "LandmarkSubsystem.h"
+#include "MassUnitInHere.h"
 #include "LandmarkSettings.h"
+#include "LandmarkMassTags.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
+#include "Engine/StaticMesh.h"
+#include "EngineUtils.h"
+#include "LandscapeProxy.h"
 #include "Kismet/GameplayStatics.h"
 #include "JsonObjectConverter.h"
 #include "DynamicRHI.h"
@@ -10,8 +15,13 @@
 #include "HAL/PlatformTime.h"
 #include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
+#include "Templates/UnrealTemplate.h"
 #include "Misc/Paths.h"
 #include "Misc/Parse.h"
+#include "Misc/ScopeExit.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
+#include "NiagaraComponent.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "UnrealClient.h"
@@ -54,6 +64,7 @@
 #include "FuncLibs/MassBattleTagHelpers.h"
 #include "MassBattleEnums.h"
 #include "MassBattleFogVisionSourceFragment.h"
+#include "Renderers/MassBattleAgentRenderer.h"
 #include "RTSSelectionSubsystem.h"
 #include "RTSSelectionStructs.h"
 #include "HAL/IConsoleManager.h"
@@ -84,20 +95,14 @@ namespace
 		Culture.ReplaceInline(TEXT("_"), TEXT("-"));
 
 		TArray<FString> Candidates;
-		AddCultureCandidate(Candidates, Culture);
-
 		const FString LowerCulture = Culture.ToLower();
 		if (LowerCulture.StartsWith(TEXT("zh")))
 		{
-			const bool bTraditional =
-				LowerCulture.Contains(TEXT("hant"))
-				|| LowerCulture.Contains(TEXT("-tw"))
-				|| LowerCulture.Contains(TEXT("-hk"))
-				|| LowerCulture.Contains(TEXT("-mo"));
-			AddCultureCandidate(
-				Candidates,
-				bTraditional ? TEXT("zh-Hant") : TEXT("zh-Hans"));
+			AddCultureCandidate(Candidates, TEXT("zh"));
+			return Candidates;
 		}
+
+		AddCultureCandidate(Candidates, Culture);
 
 		FString Language;
 		if (Culture.Split(TEXT("-"), &Language, nullptr))
@@ -479,6 +484,20 @@ static int32 GetDefaultVictoryPoints(const FString& Type)
 void ULandmarkSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
+	bMapInitializationReady = false;
+
+	UMassBattleNetworkSubsystem* Network =
+		InWorld.GetSubsystem<UMassBattleNetworkSubsystem>();
+	if (!Network || !Network->BeginLevelInitialization())
+	{
+		UE_LOG(LogLandmarkSystem, Error,
+			TEXT("LandmarkSubsystem: could not enter MassBattle Tick-0 level initialization; map remains unready."));
+		return;
+	}
+	ON_SCOPE_EXIT
+	{
+		Network->EndLevelInitialization();
+	};
 
     // 1. Load the JSON selected by the canonical full package path. The short
     // map name is intentionally never a key: EastAsia/64 and Europe/64 coexist.
@@ -495,6 +514,8 @@ void ULandmarkSubsystem::OnWorldBeginPlay(UWorld& InWorld)
     ActiveFlagSetIndex = MapProfile
         ? FMath::Max(0, MapProfile->FlagSetIndex)
         : 0;
+	bCityFlagMaterialConfigured = false;
+	ActiveCityRuntimeMesh = nullptr;
     if (MapProfile)
     {
         const bool bLoadedLandmarks = !MapProfile->LandmarkFile.IsEmpty()
@@ -551,13 +572,151 @@ void ULandmarkSubsystem::OnWorldBeginPlay(UWorld& InWorld)
     }
 
 
-    // 3. 批量生成所有城市类型的 Mass 实体（一次性，内存高效）
-    BatchSpawnAllCities();
+    // 3. Resolve legacy/missing heights from Landscape data itself. This runs
+    // before either city Mass entities or production capacities consume the
+    // landmark locations, and intentionally ignores ordinary world collision.
+    CacheLandscapeGroundSources(InWorld);
+    ResolveUnspecifiedLandmarkHeights();
+
+	// 4. 批量生成所有城市类型的 Mass 实体（一次性，内存高效）
+	BatchSpawnAllCities();
+
+	// 5. UnitHere is map-authored initial state, just like landmarks/cities.
+	// Stable local construction on every peer finishes before Tick 0 is released;
+	// runtime reinforcements continue to use ordinary lockstep commands.
+	AMassUnitInHere::InitializeAllLevelUnits(InWorld);
 	GCityTopologyBenchmark.Begin(
 		InWorld,
 		CanonicalMapPackagePath,
 		RegisteredLandmarks.Num(),
 		CityFlagEntities.Num());
+
+}
+
+void ULandmarkSubsystem::NotifyMapInitializationReady()
+{
+	if (bMapInitializationReady)
+	{
+		return;
+	}
+	bMapInitializationReady = true;
+	OnLandmarksInitializedNative.Broadcast();
+}
+
+void ULandmarkSubsystem::CacheLandscapeGroundSources(UWorld& World)
+{
+	LandscapeGroundSources.Reset();
+	for (TActorIterator<ALandscapeProxy> It(&World); It; ++It)
+	{
+		ALandscapeProxy* Landscape = *It;
+		if (IsValid(Landscape) && !Landscape->IsTemplate())
+		{
+			LandscapeGroundSources.Add(Landscape);
+		}
+	}
+
+	// Actor iteration order is not a network contract. Stable ordering keeps
+	// overlapping Landscape selection identical on every lockstep peer.
+	LandscapeGroundSources.Sort(
+		[](const TWeakObjectPtr<ALandscapeProxy>& A,
+			const TWeakObjectPtr<ALandscapeProxy>& B)
+		{
+			return A->GetPathName() < B->GetPathName();
+		});
+
+	UE_LOG(LogLandmarkSystem, Verbose,
+		TEXT("LandmarkSubsystem: cached %d deterministic Landscape ground sources."),
+		LandscapeGroundSources.Num());
+}
+
+bool ULandmarkSubsystem::ResolveLandscapeGroundLocation(
+	const FVector& InLocation,
+	FVector& OutGroundLocation) const
+{
+	const FVector HeightQueryLocation(InLocation.X, InLocation.Y, 0.0);
+	for (const TWeakObjectPtr<ALandscapeProxy>& Landscape : LandscapeGroundSources)
+	{
+		if (!Landscape.IsValid())
+		{
+			continue;
+		}
+
+		const TOptional<float> Height =
+			Landscape->GetHeightAtLocation(HeightQueryLocation);
+		if (Height.IsSet() && FMath::IsFinite(Height.GetValue()))
+		{
+			OutGroundLocation = FVector(
+				InLocation.X,
+				InLocation.Y,
+				Height.GetValue());
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool ULandmarkSubsystem::IsLandscapeGroundActor(const AActor* Actor) const
+{
+	if (!IsValid(Actor))
+	{
+		return false;
+	}
+	return LandscapeGroundSources.ContainsByPredicate(
+		[Actor](const TWeakObjectPtr<ALandscapeProxy>& Landscape)
+		{
+			return Landscape.Get() == Actor;
+		});
+}
+
+void ULandmarkSubsystem::ResolveUnspecifiedLandmarkHeights()
+{
+	int32 ResolvedCount = 0;
+	int32 UnresolvedCount = 0;
+	for (TPair<FString, FLandmarkInstanceData>& Pair : RegisteredLandmarks)
+	{
+		FLandmarkInstanceData& Data = Pair.Value;
+		// Legacy files serialize the struct default (0) even when no height was
+		// authored, so zero remains the legacy "unspecified" sentinel. A future
+		// format that needs an intentionally authored sea-level Z must add an
+		// explicit presence flag rather than inferring it from this value.
+		const bool bHasUsableSpawnZ =
+			FMath::IsFinite(Data.SpawnZ)
+			&& FMath::Abs(Data.SpawnZ) > UE_DOUBLE_KINDA_SMALL_NUMBER;
+		if (bHasUsableSpawnZ)
+		{
+			continue;
+		}
+
+		FVector GroundLocation;
+		if (ResolveLandscapeGroundLocation(Data.GetLocation(), GroundLocation))
+		{
+			Data.SpawnZ = GroundLocation.Z;
+			++ResolvedCount;
+		}
+		else
+		{
+			++UnresolvedCount;
+		}
+	}
+
+	if (ResolvedCount > 0)
+	{
+		BumpLandmarkRevision();
+	}
+	if (UnresolvedCount > 0)
+	{
+		UE_LOG(LogLandmarkSystem, Warning,
+			TEXT("LandmarkSubsystem: resolved %d missing/invalid SpawnZ values directly from Landscape; %d remain unresolved."),
+			ResolvedCount,
+			UnresolvedCount);
+	}
+	else
+	{
+		UE_LOG(LogLandmarkSystem, Log,
+			TEXT("LandmarkSubsystem: resolved %d missing/invalid SpawnZ values directly from Landscape; all landmarks have ground heights."),
+			ResolvedCount);
+	}
 }
 
 void ULandmarkSubsystem::BatchSpawnAllCities()
@@ -662,6 +821,7 @@ TArray<FEntityHandle> ULandmarkSubsystem::BatchSpawnCityType(
 		{
 			Death->bEnable = false;
 		}
+		CityData->AddTag<FCityLandmarkTag>();
 		if (UMassAPISubsystem* MassAPI = UMassAPISubsystem::GetPtr(this))
 		{
 			if (FMassEntityManager* EntityManager = MassAPI->GetEntityManager())
@@ -763,10 +923,11 @@ TArray<FEntityHandle> ULandmarkSubsystem::BatchSpawnCityType(
 
     // The persistent gameplay/base entity owns capture state and the one-cell
     // footprint, but rendering is delegated to the attached flag entity.
-    if (FDeath* Death = GameplayData->GetMutableFragment<FDeath>())
-    {
-        Death->bEnable = false;
-    }
+	if (FDeath* Death = GameplayData->GetMutableFragment<FDeath>())
+	{
+		Death->bEnable = false;
+	}
+	GameplayData->AddTag<FCityLandmarkTag>();
     if (FVisualize* Visualize = GameplayData->GetMutableFragment<FVisualize>())
     {
         Visualize->bEnable = false;
@@ -1001,7 +1162,20 @@ FString ULandmarkSubsystem::ResolveLandmarkDisplayName(
 	const FLandmarkInstanceData& Data,
 	const FString& CultureName) const
 {
-	for (const FString& Candidate : GetLandmarkCultureCandidates(CultureName))
+	const FString& EffectiveCultureName =
+		CultureName.IsEmpty() ? LocalNameCultureOverride : CultureName;
+
+	if (EffectiveCultureName.IsEmpty())
+	{
+		return Data.Name;
+	}
+	if (const FString* ExplicitName =
+		FindCultureName(Data.LocalizedNames, EffectiveCultureName))
+	{
+		return *ExplicitName;
+	}
+
+	for (const FString& Candidate : GetLandmarkCultureCandidates(EffectiveCultureName))
 	{
 		if (const FString* LocalizedName =
 			FindCultureName(Data.LocalizedNames, Candidate))
@@ -1010,6 +1184,11 @@ FString ULandmarkSubsystem::ResolveLandmarkDisplayName(
 		}
 	}
 	return Data.Name;
+}
+
+void ULandmarkSubsystem::SetLocalNameCultureOverride(const FString& CultureName)
+{
+	LocalNameCultureOverride = CultureName;
 }
 
 FString ULandmarkSubsystem::GetLandmarkDisplayName(
@@ -1218,12 +1397,120 @@ void ULandmarkSubsystem::Tick(float DeltaTime)
 	{
 		GCityTopologyBenchmark.Tick(*World);
 	}
+	ConfigureCityFlagMaterialIfReady();
 	SyncCityFlagHitAnimations();
+}
 
-	OwnershipPollAccumulator += DeltaTime;
-	if (OwnershipPollAccumulator < OwnershipPollInterval) return;
-	OwnershipPollAccumulator = 0.0f;
-	PollCityOwnership();
+void ULandmarkSubsystem::ConfigureCityFlagMaterialIfReady()
+{
+	if (bCityFlagMaterialConfigured)
+	{
+		return;
+	}
+
+	const ULandmarkSettings* Settings = ULandmarkSettings::Get();
+	UMassBattleSubsystem* MassBattle = UMassBattleSubsystem::GetPtr(this);
+	if (!Settings || !MassBattle)
+	{
+		return;
+	}
+
+	UMassBattleAgentConfigDataAsset* CityConfig = nullptr;
+	for (const FCityLevelConfig& CityLevel : Settings->CityLevelConfigs)
+	{
+		CityConfig = CityLevel.MassConfig.LoadSynchronous();
+		if (CityConfig)
+		{
+			break;
+		}
+	}
+	if (!CityConfig)
+	{
+		return;
+	}
+
+	TObjectPtr<AMassBattleAgentRenderer>* RendererPtr =
+		MassBattle->AgentRenderers.Find(CityConfig->SubType.Index);
+	AMassBattleAgentRenderer* CityRenderer = RendererPtr ? RendererPtr->Get() : nullptr;
+	UStaticMesh* SourceMesh = CityRenderer ? CityRenderer->AgentMesh.Get() : nullptr;
+	if (!CityRenderer || !SourceMesh)
+	{
+		return;
+	}
+
+	// Editor worlds may coexist with different theater flag sets, so keep their
+	// mesh material tables isolated. Cooked builds cannot duplicate a static
+	// mesh whose NavCollision was stripped from the package: serializing that
+	// subobject is a fatal error. A packaged session owns one theater and can
+	// safely update this renderer's loaded mesh material table in place.
+	UStaticMesh* RuntimeMesh = SourceMesh;
+#if WITH_EDITOR
+	RuntimeMesh = DuplicateObject<UStaticMesh>(
+		SourceMesh,
+		CityRenderer,
+		MakeUniqueObjectName(CityRenderer, UStaticMesh::StaticClass(), TEXT("CityFlagRuntimeMesh")));
+#endif
+	if (!RuntimeMesh)
+	{
+		return;
+	}
+	TArray<FStaticMaterial> RuntimeMaterials = RuntimeMesh->GetStaticMaterials();
+
+	bool bFoundFlagSetParameter = false;
+	const FMaterialParameterInfo FlagSetParameter(TEXT("FlagSetIndex"));
+	for (int32 MaterialIndex = 0;
+		MaterialIndex < SourceMesh->GetStaticMaterials().Num();
+		++MaterialIndex)
+	{
+		if (!RuntimeMaterials.IsValidIndex(MaterialIndex))
+		{
+			continue;
+		}
+		UMaterialInterface* SourceMaterial = SourceMesh->GetMaterial(MaterialIndex);
+		float ExistingValue = 0.0f;
+		if (!SourceMaterial
+			|| !SourceMaterial->GetScalarParameterValue(FlagSetParameter, ExistingValue))
+		{
+			continue;
+		}
+
+		UMaterialInstanceDynamic* DynamicMaterial =
+			UMaterialInstanceDynamic::Create(SourceMaterial, CityRenderer);
+		if (!DynamicMaterial)
+		{
+			continue;
+		}
+		DynamicMaterial->SetScalarParameterValue(
+			FlagSetParameter.Name,
+			static_cast<float>(ActiveFlagSetIndex));
+		RuntimeMaterials[MaterialIndex].MaterialInterface = DynamicMaterial;
+		bFoundFlagSetParameter = true;
+	}
+
+	if (!bFoundFlagSetParameter)
+	{
+		UE_LOG(LogLandmarkSystem, Error,
+			TEXT("LandmarkSubsystem: City mesh [%s] has no FlagSetIndex material parameter."),
+			*SourceMesh->GetPathName());
+		bCityFlagMaterialConfigured = true;
+		return;
+	}
+
+	RuntimeMesh->SetStaticMaterials(RuntimeMaterials);
+	ActiveCityRuntimeMesh = RuntimeMesh;
+	CityRenderer->AgentMesh = RuntimeMesh;
+	for (TPair<int32, FAgentRenderBatchData>& Batch : CityRenderer->SpawnedRenderBatches)
+	{
+		if (UNiagaraComponent* NiagaraComponent = Batch.Value.SpawnedNiagaraSystem)
+		{
+			NiagaraComponent->SetVariableStaticMesh(TEXT("AgentMesh"), RuntimeMesh);
+		}
+	}
+	bCityFlagMaterialConfigured = true;
+	UE_LOG(LogLandmarkSystem, Log,
+		TEXT("LandmarkSubsystem: City flag material set to theater %d on renderer subtype %d."),
+		ActiveFlagSetIndex,
+		CityConfig->SubType.Index);
 }
 
 TStatId ULandmarkSubsystem::GetStatId() const
@@ -1325,106 +1612,83 @@ void ULandmarkSubsystem::UpdateCityFlagTeam(
 		World, NewTeamIndex, *FlagEntity);
 }
 
-void ULandmarkSubsystem::PollCityOwnership()
+bool ULandmarkSubsystem::CaptureCityFromLethalDamage(
+	const FEntityHandle CityEntity,
+	const int32 CapturingTeamIndex)
 {
 	UWorld* World = GetWorld();
-	UMassEntitySubsystem* EntitySubsystem = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
-	UMassAPISubsystem* MassAPI = UMassAPISubsystem::GetPtr(this);
-	if (!EntitySubsystem || !MassAPI) return;
+	UMassEntitySubsystem* EntitySubsystem =
+		World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	FLandmarkInstanceData* Landmark = FindMutableLandmarkByEntity(CityEntity);
+	if (!EntitySubsystem || !Landmark
+		|| CapturingTeamIndex <= 0 || CapturingTeamIndex > 37
+		|| CapturingTeamIndex == Landmark->Team)
+	{
+		return false;
+	}
 
 	FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
-	for (auto& Pair : RegisteredLandmarks)
+	if (!EntityManager.IsEntityActive(CityEntity))
 	{
-		FLandmarkInstanceData& Landmark = Pair.Value;
-		if (!EntityManager.IsEntityActive(Landmark.EntityHandle)) continue;
-
-		FHealth* Health = EntityManager.GetFragmentDataPtr<FHealth>(Landmark.EntityHandle);
-		FDying* Dying = EntityManager.GetFragmentDataPtr<FDying>(Landmark.EntityHandle);
-		if (Health && Health->Current <= 0.0f && Dying
-			&& MassAPI->IsValid(Dying->Instigator))
-		{
-			const FTeam* CapturingTeam =
-				MassAPI->GetFragmentPtr<FTeam>(Dying->Instigator);
-			if (CapturingTeam && CapturingTeam->index > 0
-				&& CapturingTeam->index <= 37
-				&& CapturingTeam->index != Landmark.Team)
-			{
-				const int32 PreviousTeam = Landmark.Team;
-				const int32 NewTeam = CapturingTeam->index;
-
-				// Restore the persistent city before changing archetype tags. Any
-				// fragment pointer becomes invalid after RemoveTag, so all mutable
-				// state is reset first.
-				const float RestoredHealth = FMath::Max(1.0f, Health->Maximum);
-				Health->Current = RestoredHealth;
-				Health->DmgResults.Reset();
-				Dying->bInitialized = false;
-				Dying->bIsSuicide = false;
-				Dying->Duration = 0.0f;
-				Dying->Time = 0.0f;
-				Dying->DeathDissolveTime = 0.0f;
-				Dying->DeathAnimTime = 0.0f;
-				Dying->DisableCollisionWithAgentTimer = 0.0f;
-				Dying->Instigator = FEntityHandle();
-				Dying->HitDirection = FVector3f::ZeroVector;
-
-				if (FAnimating* Animating =
-					EntityManager.GetFragmentDataPtr<FAnimating>(Landmark.EntityHandle))
-				{
-					Animating->Dissolve = 0;
-					Animating->HitGlow = 0;
-				}
-				if (FEntityFlagFragment* Flags =
-					EntityManager.GetFragmentDataPtr<FEntityFlagFragment>(Landmark.EntityHandle))
-				{
-					auto ClearBattleFlag = [Flags](const EBattleFlags Flag)
-					{
-						Flags->ClearFlag(static_cast<EEntityFlags>(Flag));
-					};
-					ClearBattleFlag(EBattleFlags::Dying);
-					ClearBattleFlag(EBattleFlags::DeathAnim);
-					ClearBattleFlag(EBattleFlags::DeathDissolve);
-					ClearBattleFlag(EBattleFlags::BeingHit);
-					ClearBattleFlag(EBattleFlags::HitAnim);
-					ClearBattleFlag(EBattleFlags::HitGlow);
-					ClearBattleFlag(EBattleFlags::HitJiggle);
-					ClearBattleFlag(EBattleFlags::PendingDestroy);
-				}
-
-				if (MassAPI->HasTag<FDyingTag>(Landmark.EntityHandle))
-				{
-					MassAPI->RemoveTag<FDyingTag>(Landmark.EntityHandle);
-				}
-				if (MassAPI->HasTag<FDestroyingTag>(Landmark.EntityHandle))
-				{
-					MassAPI->RemoveTag<FDestroyingTag>(Landmark.EntityHandle);
-				}
-
-				if (TransferLandmarkTeam(Pair.Key, NewTeam))
-				{
-					UE_LOG(LogLandmarkSystem, Display,
-						TEXT("City [%s] captured by lethal damage: Team %d -> %d; health restored to %.1f."),
-						*Landmark.Name,
-						PreviousTeam,
-						NewTeam,
-						RestoredHealth);
-				}
-				continue;
-			}
-		}
-
-		const FTeam* Team = EntityManager.GetFragmentDataPtr<FTeam>(Landmark.EntityHandle);
-		if (!Team || Team->index == Landmark.Team) continue;
-
-		const int32 PreviousTeam = Landmark.Team;
-		Landmark.Team = Team->index;
-		BumpLandmarkRevision();
-		UpdateCityFlagTeam(Landmark.EntityHandle, Landmark.Team);
-		TriggerCityFlagUpdateAnimation(Landmark.EntityHandle);
-		OnLandmarkTeamChangedNative.Broadcast(Landmark, PreviousTeam, Landmark.Team);
-		UE_LOG(LogLandmarkSystem, Log, TEXT("City [%s] captured: Team %d -> %d."),
-			*Landmark.Name, PreviousTeam, Landmark.Team);
+		return false;
 	}
+	FHealth* Health = EntityManager.GetFragmentDataPtr<FHealth>(CityEntity);
+	FDying* Dying = EntityManager.GetFragmentDataPtr<FDying>(CityEntity);
+	if (!Health || Health->Current > 0.0f || !Dying)
+	{
+		return false;
+	}
+
+	const int32 PreviousTeam = Landmark->Team;
+	const FString LandmarkId = Landmark->ID;
+	const FString LandmarkName = Landmark->Name;
+	const float RestoredHealth = FMath::Max(1.0f, Health->Maximum);
+	Health->Current = RestoredHealth;
+	Health->DmgResults.Reset();
+	Dying->bInitialized = false;
+	Dying->bIsSuicide = false;
+	Dying->Duration = 0.0f;
+	Dying->Time = 0.0f;
+	Dying->DeathDissolveTime = 0.0f;
+	Dying->DeathAnimTime = 0.0f;
+	Dying->DisableCollisionWithAgentTimer = 0.0f;
+	Dying->Instigator = FEntityHandle();
+	Dying->HitDirection = FVector3f::ZeroVector;
+
+	if (FAnimating* Animating =
+		EntityManager.GetFragmentDataPtr<FAnimating>(CityEntity))
+	{
+		Animating->Dissolve = 0;
+		Animating->HitGlow = 0;
+	}
+	if (FEntityFlagFragment* Flags =
+		EntityManager.GetFragmentDataPtr<FEntityFlagFragment>(CityEntity))
+	{
+		auto ClearBattleFlag = [Flags](const EBattleFlags Flag)
+		{
+			Flags->ClearFlag(static_cast<EEntityFlags>(Flag));
+		};
+		ClearBattleFlag(EBattleFlags::Dying);
+		ClearBattleFlag(EBattleFlags::DeathAnim);
+		ClearBattleFlag(EBattleFlags::DeathDissolve);
+		ClearBattleFlag(EBattleFlags::BeingHit);
+		ClearBattleFlag(EBattleFlags::HitAnim);
+		ClearBattleFlag(EBattleFlags::HitGlow);
+		ClearBattleFlag(EBattleFlags::HitJiggle);
+		ClearBattleFlag(EBattleFlags::PendingDestroy);
+	}
+
+	if (!TransferLandmarkTeam(LandmarkId, CapturingTeamIndex))
+	{
+		return false;
+	}
+	UE_LOG(LogLandmarkSystem, Display,
+		TEXT("City [%s] captured by lethal-damage event: Team %d -> %d; health restored to %.1f."),
+		*LandmarkName,
+		PreviousTeam,
+		CapturingTeamIndex,
+		RestoredHealth);
+	return true;
 }
 
 void ULandmarkSubsystem::TriggerCityFlagUpdateAnimation(const FEntityHandle& Entity)
@@ -1554,6 +1818,21 @@ bool ULandmarkSubsystem::TransferLandmarkTeam(
 	{
 		return true;
 	}
+	bool bAllowTransfer = true;
+	OnLandmarkTeamChangeRequestedNative.Broadcast(
+		*Landmark,
+		PreviousTeam,
+		NewTeamIndex,
+		bAllowTransfer);
+	if (!bAllowTransfer)
+	{
+		UE_LOG(LogLandmarkSystem, Display,
+			TEXT("City [%s] transfer deferred by gameplay policy: Team %d -> %d."),
+			*Landmark->Name,
+			PreviousTeam,
+			NewTeamIndex);
+		return false;
+	}
 
 	UWorld* World = GetWorld();
 	UMassEntitySubsystem* EntitySubsystem =
@@ -1613,6 +1892,9 @@ void ULandmarkSubsystem::Deinitialize()
 	CityFlagEntities.Empty();
 	CityHealthSamples.Empty();
 	SpatialGrid.Empty();
+	LandscapeGroundSources.Empty();
+	ActiveCityRuntimeMesh = nullptr;
+	bCityFlagMaterialConfigured = false;
 	Super::Deinitialize();
 }
 
@@ -1874,11 +2156,12 @@ void ULandmarkSubsystem::ApplyCityNameLocalizationTable(
     static const TCHAR* CultureFields[] =
     {
         TEXT("en"),
-        TEXT("zh-Hans"),
-        TEXT("zh-Hant"),
+        TEXT("zh"),
         TEXT("ru"),
         TEXT("ja"),
-        TEXT("ko")
+        TEXT("ko"),
+        TEXT("native_geographic"),
+        TEXT("native_team")
     };
 
     const FString CleanLandmarkFile =
@@ -1920,7 +2203,10 @@ void ULandmarkSubsystem::ApplyCityNameLocalizationTable(
             FString LocalizedName;
             if (Row->TryGetStringField(CultureField, LocalizedName)
                 && !LocalizedName.IsEmpty()
-                && !LocalizedName.Equals(Landmark.Name, ESearchCase::CaseSensitive))
+                && (FCString::Strncmp(CultureField, TEXT("native_"), 7) == 0
+                    || !LocalizedName.Equals(
+                        Landmark.Name,
+                        ESearchCase::CaseSensitive)))
             {
                 Landmark.LocalizedNames.FindOrAdd(FString(CultureField)) =
                     MoveTemp(LocalizedName);
@@ -1971,6 +2257,104 @@ bool ULandmarkSubsystem::SaveLandmarksToFile(const FString& FileName, const TArr
 }
 
 // --- Spatial Grid Implementation ---
+
+void ULandmarkSubsystem::SerializeWorldSnapshot(
+    FArchive& Ar, TFunctionRef<void(FEntityHandle&)> Entity)
+{
+    TArray<FString> IDs;
+    if (Ar.IsSaving())
+    {
+        RegisteredLandmarks.GetKeys(IDs);
+        IDs.Sort();
+    }
+    Ar << IDs;
+    TMap<FString, FLandmarkInstanceData> PreviousLandmarks;
+    if (Ar.IsLoading())
+    {
+        PreviousLandmarks = MoveTemp(RegisteredLandmarks);
+        RegisteredLandmarks.Empty(IDs.Num());
+    }
+    for (const FString& ID : IDs)
+    {
+        FLandmarkInstanceData Data = Ar.IsSaving()
+            ? RegisteredLandmarks.FindChecked(ID) : FLandmarkInstanceData();
+        // The reflected struct has no entity handle. Its linked Actor is local
+        // presentation, while the non-reflected Mass handle must use the UID map.
+        Data.LinkedActor.Reset();
+        FLandmarkInstanceData::StaticStruct()->SerializeItem(Ar, &Data, nullptr);
+        FEntityHandle Handle = Data.EntityHandle;
+        Entity(Handle);
+        if (Ar.IsLoading())
+        {
+            Data.EntityHandle = Handle;
+            if (const FLandmarkInstanceData* Previous = PreviousLandmarks.Find(ID))
+            {
+                Data.LinkedActor = Previous->LinkedActor;
+                Data.Name = Previous->Name;
+                Data.LocalizedNames = Previous->LocalizedNames;
+            }
+            RegisteredLandmarks.Add(ID, MoveTemp(Data));
+        }
+    }
+    Ar << LandmarkRevision << bMapInitializationReady;
+
+    int32 FlagCount = CityFlagEntities.Num();
+    Ar << FlagCount;
+    if (Ar.IsLoading())
+    {
+        CityFlagEntities.Empty(FlagCount);
+        for (int32 Index = 0; Index < FlagCount; ++Index)
+        {
+            FEntityHandle City, Flag;
+            Entity(City);
+            Entity(Flag);
+            CityFlagEntities.Add(City, Flag);
+        }
+    }
+    else
+    {
+        for (const auto& Pair : CityFlagEntities)
+        {
+            FEntityHandle City = Pair.Key;
+            FEntityHandle Flag = Pair.Value;
+            Entity(City);
+            Entity(Flag);
+        }
+    }
+
+    int32 HealthCount = CityHealthSamples.Num();
+    Ar << HealthCount;
+    if (Ar.IsLoading())
+    {
+        CityHealthSamples.Empty(HealthCount);
+        for (int32 Index = 0; Index < HealthCount; ++Index)
+        {
+            FEntityHandle City;
+            float Health = 0.0f;
+            Entity(City);
+            Ar << Health;
+            CityHealthSamples.Add(City, Health);
+        }
+    }
+    else
+    {
+        for (const auto& Pair : CityHealthSamples)
+        {
+            FEntityHandle City = Pair.Key;
+            float Health = Pair.Value;
+            Entity(City);
+            Ar << Health;
+        }
+    }
+    if (Ar.IsLoading() && !Ar.IsError())
+    {
+        RebuildSpatialGrid();
+        VisibleLandmarkIDs.Reset();
+        CachedScreenPositions.Reset();
+        CachedScales.Reset();
+        CachedAlphas.Reset();
+    }
+}
 
 void ULandmarkSubsystem::RebuildSpatialGrid()
 {

@@ -4,15 +4,24 @@
 
 #include "Components/StaticMeshComponent.h"
 #include "DataAssets/MassBattleAgentConfigDataAsset.h"
+#include "EngineUtils.h"
 #include "Fragments/Health.h"
 #include "Fragments/HealthBar.h"
+#include "Fragments/StyleType.h"
 #include "FuncLibs/MassBattleFuncLib.h"
+#include "LandmarkSubsystem.h"
+#include "LandmarkSettings.h"
 #include "MassBattleEnums.h"
 #include "MassBattleStructs.h"
 #include "MassEntityManager.h"
 #include "MassEntitySubsystem.h"
 #include "MassEntityTypes.h"
+#include "Misc/ScopeExit.h"
+#include "Templates/UnrealTemplate.h"
+#include "Minimap/MapPackageProfilePaths.h"
 #include "Renderers/MassBattleAgentRenderer.h"
+#include "RTSMoveNavigationProvider.h"
+#include "Subsystems/MassBattleNetworkSubsystem.h"
 
 AMassUnitInHere::AMassUnitInHere()
 {
@@ -56,23 +65,165 @@ void AMassUnitInHere::UpdatePreview()
 	}
 }
 
+bool AMassUnitInHere::IsConfiguredCityUnit() const
+{
+	if (!AgentConfig)
+	{
+		return false;
+	}
+
+	const ULandmarkSettings* Settings = ULandmarkSettings::Get();
+	if (!Settings)
+	{
+		return false;
+	}
+
+	const FSoftObjectPath AgentPath(AgentConfig);
+	for (const FCityLevelConfig& CityConfig : Settings->CityLevelConfigs)
+	{
+		if (CityConfig.MassConfig.Get() == AgentConfig
+			|| CityConfig.MassConfig.ToSoftObjectPath() == AgentPath)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+int32 AMassUnitInHere::ResolveMapFlagSetIndex() const
+{
+	const UWorld* World = GetWorld();
+	const ULandmarkSettings* Settings = ULandmarkSettings::Get();
+	if (!World || !Settings)
+	{
+		return 0;
+	}
+
+	const FString MapPackagePath =
+		MassBattleMapProfilePaths::GetCanonicalMapPackagePath(World);
+	const FLandmarkMapProfile* MapProfile = Settings->FindMapProfile(MapPackagePath);
+	return MapProfile ? FMath::Max(0, MapProfile->FlagSetIndex) : 0;
+}
+
 void AMassUnitInHere::BeginPlay()
 {
 	Super::BeginPlay();
+	if (!bLevelUnitsInitialized)
+	{
+		InitializeLevelUnits(false);
+	}
+}
+
+int32 AMassUnitInHere::InitializeAllLevelUnits(UWorld& World)
+{
+	TArray<AMassUnitInHere*> Placements;
+	for (TActorIterator<AMassUnitInHere> It(&World); It; ++It)
+	{
+		if (It->bSpawnEnabled && !It->IsTemplate())
+		{
+			Placements.Add(*It);
+		}
+	}
+	Placements.Sort([](const AMassUnitInHere& A, const AMassUnitInHere& B)
+	{
+		return A.GetFName().LexicalLess(B.GetFName());
+	});
+
+	UMassBattleNetworkSubsystem* Network =
+		World.GetSubsystem<UMassBattleNetworkSubsystem>();
+	if (!Network)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("MassUnitInHere level initialization has no MassBattle network subsystem."));
+		return 0;
+	}
+	if (!Network->BeginLevelInitialization())
+	{
+		return 0;
+	}
+	ON_SCOPE_EXIT
+	{
+		Network->EndLevelInitialization();
+	};
+
+	int32 CompletedFormations = 0;
+	int64 CompletedEntities = 0;
+	for (AMassUnitInHere* Placement : Placements)
+	{
+		const int32 PlacementQuantity = Placement
+			? FMath::Max(1, Placement->Quantity)
+			: 0;
+		if (Placement && Placement->InitializeLevelUnits(true))
+		{
+			++CompletedFormations;
+			CompletedEntities += PlacementQuantity;
+		}
+	}
+	// Project systems may add deterministic map-authored entities (for example
+	// national government objectives) only while this shared Tick-0 scope is
+	// still active. Runtime synchronous spawning is intentionally rejected in
+	// network play outside the level-initialization or command scope.
+	const bool bAllPlacementsCompleted =
+		CompletedFormations == Placements.Num();
+	if (bAllPlacementsCompleted)
+	{
+		if (ULandmarkSubsystem* Landmarks =
+			World.GetSubsystem<ULandmarkSubsystem>())
+		{
+			Landmarks->NotifyMapInitializationReady();
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("MassUnitInHere LEVEL_INIT failed closed: only %d/%d formations completed; Tick 0 will not be released as map-ready."),
+			CompletedFormations,
+			Placements.Num());
+	}
+	UE_LOG(LogTemp, Display,
+		TEXT("MassUnitInHere LEVEL_INIT completed %d/%d formations (%lld entities) before network simulation."),
+		CompletedFormations,
+		Placements.Num(),
+		static_cast<long long>(CompletedEntities));
+	return CompletedFormations;
+}
+
+bool AMassUnitInHere::InitializeLevelUnits(const bool bForceSynchronous)
+{
+	if (bLevelUnitsInitialized)
+	{
+		return true;
+	}
 
 	if (!bSpawnEnabled)
 	{
 		UE_LOG(LogTemp, Log, TEXT("MassUnitInHere [%s] spawn disabled; skipping Mass spawn."), *GetName());
 		Destroy();
-		return;
+		bLevelUnitsInitialized = true;
+		return true;
 	}
 
 	UWorld* World = GetWorld();
 	if (!World || !AgentConfig)
 	{
 		Destroy();
-		return;
+		return false;
 	}
+
+	// Network peers must reach this actor through InitializeAllLevelUnits while
+	// the Tick-0 scope is active. BeginPlay is only a standalone/fallback path.
+	if (!bForceSynchronous && World->GetNetMode() != NM_Standalone)
+	{
+		if (PreviewMeshComponent)
+		{
+			PreviewMeshComponent->SetHiddenInGame(true);
+		}
+		UE_LOG(LogTemp, Error,
+			TEXT("MassUnitInHere [%s] missed Tick-0 level initialization; runtime spawn rejected."),
+			*GetName());
+		return false;
+	}
+	bLevelUnitsInitialized = true;
 
 	const int32 SafeQuantity = FMath::Max(1, Quantity);
 
@@ -88,7 +239,27 @@ void AMassUnitInHere::BeginPlay()
 	Shape.Region = FVector2D(RegionSize, RegionSize);
 	Shape.Spacing = FVector2D(SpawnSpacing, SpawnSpacing);
 
-	if (bDeferLargeSpawns && SafeQuantity > FMath::Max(1, AgentsPerSpawnStep))
+	FVector SpawnLocation = GetActorLocation();
+	const float FormationRadiusUU = Shape.Region.Size() * 0.5f;
+	if (!FRTSMoveNavigationProviderRegistry::ResolveInitialSpawnLocation(
+			this,
+			AgentConfig,
+			SpawnLocation,
+			FormationRadiusUU,
+			SpawnLocation))
+	{
+		if (PreviewMeshComponent)
+		{
+			PreviewMeshComponent->SetHiddenInGame(true);
+		}
+		UE_LOG(LogTemp, Error,
+			TEXT("MassUnitInHere [%s] rejected: no legal terrain-domain location exists for its complete formation."),
+			*GetName());
+		return false;
+	}
+
+	if (!bForceSynchronous && bDeferLargeSpawns
+		&& SafeQuantity > FMath::Max(1, AgentsPerSpawnStep))
 	{
 		const int32 SpawnStepCount = FMath::CeilToInt(
 			static_cast<float>(SafeQuantity) / static_cast<float>(FMath::Max(1, AgentsPerSpawnStep)));
@@ -101,7 +272,7 @@ void AMassUnitInHere::BeginPlay()
 			AgentConfig,
 			SafeQuantity,
 			Team,
-			GetActorLocation(),
+			SpawnLocation,
 			Shape,
 			FVector2D::ZeroVector,
 			EInitialRotation::CustomRotation,
@@ -114,7 +285,7 @@ void AMassUnitInHere::BeginPlay()
 		UE_LOG(LogTemp, Log,
 			TEXT("MassUnitInHere [%s] deferred spawn submitted: Quantity=%d Team=%d Steps=%d."),
 			*GetName(), SafeQuantity, Team, SpawnStepCount);
-		return;
+		return true;
 	}
 
 	const TArray<FEntityHandle> SpawnedEntities = UMassBattleFuncLib::SpawnAgentsByConfigRectangular(
@@ -122,14 +293,18 @@ void AMassUnitInHere::BeginPlay()
 		AgentConfig,
 		SafeQuantity,
 		Team,
-		GetActorLocation(),
+		SpawnLocation,
 		Shape,
 		FVector2D::ZeroVector,
 		EInitialRotation::CustomRotation,
 		GetActorRotation());
 
 	ApplySpawnOverrides(SpawnedEntities);
+	UE_LOG(LogTemp, Display,
+		TEXT("MassUnitInHere [%s] level spawn completed: Spawned=%d Team=%d."),
+		*GetName(), SpawnedEntities.Num(), Team);
 	Destroy();
+	return SpawnedEntities.Num() == SafeQuantity;
 }
 
 void AMassUnitInHere::HandleDeferredSpawnFinished(const TArray<FEntityHandle>& SpawnedEntities)
@@ -149,13 +324,24 @@ void AMassUnitInHere::ApplySpawnOverrides(const TArray<FEntityHandle>& SpawnedEn
 		return;
 	}
 
-	if ((HealthOverride > 0.f || bOverrideHealthBarVisibility) && SpawnedEntities.Num() > 0)
+	const bool bCityUnit = IsConfiguredCityUnit();
+	if ((bCityUnit || HealthOverride > 0.f || bOverrideHealthBarVisibility)
+		&& SpawnedEntities.Num() > 0)
 	{
 		if (UMassEntitySubsystem* EntitySubsystem = World->GetSubsystem<UMassEntitySubsystem>())
 		{
 			FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
+			const int32 FlagSetIndex = bCityUnit ? ResolveMapFlagSetIndex() : 0;
 			for (const FEntityHandle& Handle : SpawnedEntities)
 			{
+				if (bCityUnit)
+				{
+					if (FStyleType* Style = EntityManager.GetFragmentDataPtr<FStyleType>(Handle))
+					{
+						Style->Variant = FlagSetIndex;
+					}
+				}
+
 				if (HealthOverride > 0.f)
 				{
 					if (FHealth* HealthFragment = EntityManager.GetFragmentDataPtr<FHealth>(Handle))

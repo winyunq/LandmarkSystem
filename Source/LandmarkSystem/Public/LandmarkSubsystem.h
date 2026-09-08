@@ -1,16 +1,27 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Curves/CurveFloat.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "LandmarkTypes.h"
 #include "MassAPIStructs.h"
 #include "LandmarkSubsystem.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogLandmarkSystem, Log, All);
+DECLARE_MULTICAST_DELEGATE_FourParams(
+	FOnLandmarkTeamChangeRequestedNative,
+	const FLandmarkInstanceData&,
+	int32,
+	int32,
+	bool&);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnLandmarkTeamChangedNative, const FLandmarkInstanceData&, int32, int32);
+DECLARE_MULTICAST_DELEGATE(FOnLandmarksInitializedNative);
 
 struct FRTSSelectionView;
 struct FRTSUnitData;
+class ALandscapeProxy;
+class UFont;
+class UStaticMesh;
 
 /**
  * ULandmarkSubsystem
@@ -33,8 +44,22 @@ public:
 	virtual TStatId GetStatId() const override;
 	virtual bool IsTickable() const override;
 
+	void SerializeWorldSnapshot(FArchive& Ar, TFunctionRef<void(FEntityHandle&)> Entity);
+
+	/** Pre-transfer veto hook. Listeners may set bAllowTransfer to false. */
+	FOnLandmarkTeamChangeRequestedNative OnLandmarkTeamChangeRequestedNative;
+
 	/** Native notification used by the game economy when a Mass city changes owner. */
 	FOnLandmarkTeamChangedNative OnLandmarkTeamChangedNative;
+
+	/** Fired once all map-authored landmark, city, and level-unit initialization is complete. */
+	FOnLandmarksInitializedNative OnLandmarksInitializedNative;
+
+	/** True while/after map-authored entities are ready for deterministic Tick-0 extensions. */
+	bool IsMapInitializationReady() const { return bMapInitializationReady; }
+
+	/** Called once by the level-unit initializer while its shared Tick-0 scope is active. */
+	void NotifyMapInitializationReady();
 
 	// --- Registration API ---
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
@@ -76,15 +101,18 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "LandmarkSystem")
 	FString FindTypeByEntity(FEntityHandle Handle) const;
 
-	/**
-	 * Resolve one landmark name for a culture. An empty culture uses this
-	 * client's current Unreal culture, so network players can see different
-	 * names without replicating presentation text.
-	 */
+	/** Resolve one landmark name; an empty culture uses the Name loaded from the selected JSON. */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "LandmarkSystem|Localization")
 	FString GetLandmarkDisplayName(
 		const FString& LandmarkID,
 		const FString& CultureName = FString()) const;
+
+	/** Set an optional lookup override; pass empty to use the selected culture JSON again. */
+	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem|Localization")
+	void SetLocalNameCultureOverride(const FString& CultureName);
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "LandmarkSystem|Localization")
+	FString GetLocalNameCultureOverride() const { return LocalNameCultureOverride; }
 
 	/** Runtime lookup helpers for pure-Mass city gameplay (no Actor per city required). */
 	const FLandmarkInstanceData* FindLandmarkByEntity(FEntityHandle Handle) const;
@@ -95,9 +123,24 @@ public:
 	uint32 GetLandmarkRevision() const { return LandmarkRevision; }
 	void SetCapitalCity(const FString& LandmarkID, int32 TeamIndex);
 
+	/**
+	 * Resolve an XY point against the map's Landscape heightfield directly.
+	 * This deliberately bypasses world collision so decorative water planes and
+	 * other WorldStatic actors cannot become city or unit ground.
+	 */
+	bool ResolveLandscapeGroundLocation(
+		const FVector& InLocation,
+		FVector& OutGroundLocation) const;
+	bool IsLandscapeGroundActor(const AActor* Actor) const;
+
 	/** Change a live Mass city's owner while keeping its fragment, tags and HUD data in sync. */
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem|Ownership")
 	bool TransferLandmarkTeam(const FString& LandmarkID, int32 NewTeamIndex);
+
+	/** Called only by the city FDyingTag observer; restores and transfers one city. */
+	bool CaptureCityFromLethalDamage(
+		FEntityHandle CityEntity,
+		int32 CapturingTeamIndex);
 
 	UFUNCTION(BlueprintPure, Category = "LandmarkSystem|Economy")
 	float GetFactoryBuildCost(const FString& Type) const;
@@ -134,13 +177,17 @@ protected:
 	TMap<FString, TObjectPtr<class URTSCommandGridAsset>> TypeGridAssets;
 
 	TMap<FIntPoint, TArray<FString>> SpatialGrid;
+	TArray<TWeakObjectPtr<ALandscapeProxy>> LandscapeGroundSources;
 
 	float SpatialCellSize = 10000.0f;
 	void RebuildSpatialGrid();
 
 private:
+	bool bMapInitializationReady = false;
 	/** 批量生成所有城市类型的 Mass 实体，通过 ULandmarkSettings 读取配置 */
 	void BatchSpawnAllCities();
+	void CacheLandscapeGroundSources(UWorld& World);
+	void ResolveUnspecifiedLandmarkHeights();
 
 	/** 按类型名批量生成一组城市实体，返回句柄数组 */
 	TArray<FEntityHandle> BatchSpawnCityType(const FString& TypeName, const TArray<FVector>& Locations, int32 Team = 0);
@@ -148,9 +195,12 @@ private:
 	FVector LastCameraLoc;
 	FRotator LastCameraRot;
 	float LastZoomFactor = 0.5f;
-	float OwnershipPollAccumulator = 0.0f;
-	float OwnershipPollInterval = 0.25f;
 	int32 ActiveFlagSetIndex = 0;
+	bool bCityFlagMaterialConfigured = false;
+	FString LocalNameCultureOverride;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMesh> ActiveCityRuntimeMesh;
 
 	/** Gameplay City -> attached visual flag Agent. The gameplay entity keeps the one-cell base. */
 	TMap<FEntityHandle, FEntityHandle> CityFlagEntities;
@@ -165,7 +215,7 @@ private:
 	void BumpLandmarkRevision();
 	void ResolveMassCommandGrid(UObject* WorldContextObject, const FString& ActiveKey, const FRTSSelectionView& SelectionView, class URTSCommandGridAsset*& OutGrid);
 	void EnrichMassUnitData(UObject* WorldContextObject, const FEntityHandle& Entity, FRTSUnitData& Data);
-	void PollCityOwnership();
+	void ConfigureCityFlagMaterialIfReady();
 	void SyncCityFlagHitAnimations();
 	void UpdateCityFlagTeam(const FEntityHandle& CityEntity, int32 NewTeamIndex);
 	void TriggerCityFlagUpdateAnimation(const FEntityHandle& Entity);
