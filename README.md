@@ -1,0 +1,220 @@
+# LandmarkSystem for UE5
+
+**LandmarkSystem** is a high-performance, LOD-aware map labeling system designed for RTS and Grand Strategy games in Unreal Engine 5. It solves the specific challenge of displaying readable map labels (Cities, Rivers, Mountains) across massive zoom ranges, implementing "Counter-intuitive Scaling" effectively.
+
+## How to Use
+
+### 1. Editing Landmarks (Editor)
+
+1.  **Place Actor**: Drag and drop a **`LandmarkCloudActor`** into your level.
+2.  **Configure**: In the Details panel, find the **"Landmark IO"** category.
+    *   Set **`JsonFileName`** to a unique name for this level, e.g., `Landmarks_LevelName.json`.
+    *   *Note: Files are saved to `Content/MapData/`.*
+3.  **Edit Points**:
+    *   Select the **`LandmarkCloudComponent`** (or just click the Actor).
+    *   **Add Points**: Click the **`Add Landmark Point`** button in the Details panel. (This adds a point at the Actor's location).
+    *   **Move Points**: Drag the diamond handles in the viewport.
+    *   **Properties**: Expand the `Landmarks` array to edit names ("DisplayName") or ID.
+4.  **Load/Save**:
+    *   Click **`Load From Json`** to load existing data from disk (if any).
+    *   Click **`Save To Json`** to save your changes to the file.
+
+### Runtime loading
+
+Runtime JSON loading is fail-closed and keyed by the level's canonical package path. Add one
+`MapProfiles` entry in **Project Settings > Plugins > Landmark System** for each level that owns
+landmark data, and bind it to exactly one JSON file under `Content/MapData/`. A level without an
+exact profile loads no file-backed landmarks. A missing or invalid bound file also leaves the
+file-backed landmark set empty; there is no shared/default-file fallback.
+
+### Multilingual city names
+
+City identity, ownership, coordinates, and Mass replication are culture-neutral. Only the
+client-side display name is localized, so players connected to the same match may use different
+languages. At map load, the subsystem selects one full JSON for the local player's Unreal
+culture. Every Chinese culture (`zh-CN`, `zh-TW`, `zh-Hans`, and `zh-Hant`) selects the same
+simplified-Chinese `zh` JSON. If no supported culture file exists, the root map JSON is loaded;
+that fallback file uses the language of each city's initially assigned Team.
+
+Two compatible data layouts are supported:
+
+1. Culture-specific full files. Place files at paths such as
+   `Content/MapData/zh/Landmarks_EastAsia_64.json` and
+   `Content/MapData/en/Landmarks_EastAsia_64.json`. The subsystem tries the player's supported
+   culture and otherwise uses the map profile's root/default file.
+2. A unified sidecar table. Place `CityNames_AllLanguages.json` at
+   `Content/MapData/localization_table/` or change `CityNameLocalizationTableFile` in
+   **Project Settings > Plugins > Landmark System**. The expected format is the
+   `localization_table/CityNames_AllLanguages.json` file from the multilingual city package.
+
+Individual landmark JSON objects may also contain a `LocalizedNames` map:
+
+```json
+{
+  "ID": "city_beijing",
+  "Name": "Beijing",
+  "LocalizedNames": {
+    "zh": "北京",
+    "ja": "北京"
+  }
+}
+```
+
+Keep `ID` stable across languages. When an imported record has no explicit `ID`, a
+culture-specific file uses the matching base-map name to reproduce the legacy identity hash; the
+localized display name never changes identity.
+Blueprint/UI code can call `GetLandmarkDisplayName`; `GetVisibleLandmarks` already returns a copy
+whose `Name` comes directly from the selected client-language JSON.
+
+The generated package uses official GeoNames alternate names first and auditable machine
+fallbacks only where an official target-language name is absent. Run
+`Scripts/generate_city_localization.py` to rebuild it and
+`Scripts/install_city_localization.py` to install a verified build with a timestamped backup.
+The atomic East Asia ownership table is `Data/EastAsia_Teams_1936.json`; lobby presets may group
+those Team IDs into player roles, but map data must not replace the atomic IDs with merged roles.
+
+## Data Format (JSON)
+
+We use standard Unreal Engine JSON serialization.
+Each file (e.g., `Landmarks_64.json`) contains an **Array** of Landmark Objects.
+
+### JSON Structure Example
+
+```json
+[
+  {
+    "Name": "Beijing",
+    "X": 10000.0,
+    "Y": 20000.0,
+    "ZMin": 2000.0,   // MinVisibleHeight
+    "ZMax": 100000.0, // MaxVisibleHeight
+    "Type": "City"
+  },
+  {
+    "Name": "Small Village",
+    "X": 10500.0,
+    "Y": 20500.0,
+    "ZMin": 0.0,
+    "ZMax": 2000.0,
+    "Type": "Village"
+  }
+]
+```
+
+### Fields Explanation
+*   **`Name`**: The specific display name (also serves as ID if unique).
+*   **`X`, `Y`**: World coordinates.
+*   **`ZMin`, `ZMax`**: The camera height range (Z-axis) for visibility.
+    *   `0 - 2000`: Low altitude (Detail)
+    *   `4000 - Infinity`: High altitude (Macro)
+*   **`Type`**: String parameter. Can be used for classification (e.g., "City", "Mountain").
+*   **`Team`**: Optional integer team owner. Defaults to `0` when omitted.
+
+### 3. Editor Workflow
+
+### 1. 反直觉缩放 (Counter-intuitive / Adaptive Scaling)
+在传统透视投影中，当相机拉远时，物体会变小直到不可见。而在策略地图中，我们希望：
+*   **近景 (Micro)**: 标签显示正常大小，或者隐藏（以免遮挡单位）。
+*   **远景 (Macro)**: 标签保持可读大小，甚至相对变得“更大”，成为主要的地标指示。
+
+本系统通过 `ULandmarkSubsystem` 动态计算 `ZoomFactor` (0.0 - 1.0)，并通过可配置的 `RuntimeFloatCurve` 驱动标签的 **Scale** 和 **Opacity**。
+
+### 2. 混合数据源架构 (Hybrid Data Sources)
+系统采用**聚合器模式**，`ULandmarkSubsystem` 作为中心，接受来自不同来源的注册：
+
+*   **静态源 (Static)**: `ALandmarkMapLabelProxy`
+    *   **原理**: 编辑器专用 Actor (`IsEditorOnlyActor=true`)。
+    *   **用途**: 摆放山脉、平原等永久地名。
+    *   **性能**: 打包时自动剔除，无运行时 Actor 开销。数据在构建时或加载时注册到 Subsystem。
+*   **动态源 (Dynamic)**: Actor API
+    *   **原理**: 任何 Actor (如 `AORTSCityActor`) 可在 `BeginPlay` 调用 `RegisterLandmark`。
+    *   **用途**: 城市、移动的军队、任务点。支持运行时更新位置和名字。
+*   **过程化源 (Procedural)**: `ALandmarkPathGenerator`
+    *   **原理**: 基于 Spline 组件。
+    *   **用途**: 河流、商路、国界线。
+    *   **算法**: 沿样条线每隔一定距离 (Spacing) 自动插值生成一个地标点。
+
+### 3. 高性能渲染 (High Performance Rendering)
+*   **视锥剔除 (Frustum Culling)**: 每帧计算，仅处理屏幕内的地标。
+*   **运行时缓存 (Runtime Cache)**: `ULandmarkSubsystem` 缓存可见地标、屏幕位置、缩放和透明度，避免相机稳定时重复计算。
+*   **Canvas 回退路径 (Canvas Fallback)**: 当前运行时仍通过 `HUD::DrawHUD` / `UCanvas` 绘制标签。该路径避免了大量 UMG Widget，但文本测量和提交仍在 CPU 每帧发生。
+*   **GPU 化路线 (GPU Roadmap)**: 后续应将地名文本缓存为图集，并通过批量 quad/material 渲染。详细计划见 `Docs/GPU_LANDMARK_LABEL_RENDERING.md`。
+
+## 技术架构 (Architecture)
+
+### 类结构
+*   `ULandmarkSubsystem` (UWorldSubsystem): 核心管理器。维护 `TMap<ID, Data>`。
+*   `FLandmarkInstanceData`: 扁平化数据结构 (P.O.D.)，包含位置、名字、视觉配置。
+*   `FLandmarkVisualConfig`: 定义显示的 Zoom 范围 (`MinVisibleZoom`, `MaxVisibleZoom`) 和优先级。
+
+### 关键流程
+1.  **注册**: 数据源调用 `Subsystem->RegisterLandmark(Data)`。
+2.  **更新**: 相机 (PlayerController) 在且仅在位置变化时调用 `Subsystem->UpdateCameraState(Location, Zoom)`。
+3.  **计算**: Subsystem 遍历数据 -> 剔除 -> 计算屏幕坐标 -> 计算缩放/透明度 -> 缓存结果。
+4.  **渲染**: HUD 调用 `Subsystem->GetVisibleLandmarks()` -> `Canvas->DrawText`。
+
+## 使用方法 (Usage)
+
+### 1. 摆放静态地标
+在编辑器中拖入 `LandmarkMapLabelProxy`，设置 `DisplayName` 和 `VisualConfig`。
+
+### 2. 代码注册动态地标
+```cpp
+// 在你的 Actor (如 City) 中
+void AMyCity::BeginPlay()
+{
+    Super::BeginPlay();
+    if (auto* Sys = GetWorld()->GetSubsystem<ULandmarkSubsystem>())
+    {
+        FLandmarkInstanceData Data;
+        Data.ID = GetName();
+        Data.DisplayName = FText::FromString("Chang'an");
+        Data.WorldLocation = GetActorLocation();
+        Data.VisualConfig.BaseScale = 1.5f;
+        // 关键：设置在什么缩放级别可见
+        Data.VisualConfig.MinVisibleZoom = 0.0f; // 地面
+        Data.VisualConfig.MaxVisibleZoom = 1.0f; // 太空
+        
+        Sys->RegisterLandmark(Data);
+    }
+}
+```
+
+### 3. 设置过程化河流
+拖入 `LandmarkPathGenerator`，编辑 Spline 路径，设置 `BaseDisplayName` 为 "Yellow River"，设置 `Spacing` 为 5000。
+
+### 4. 指令系统集成 (RTS Commands Integration)
+系统支持基于**类型 (Type)** 的动态指令面板切换：
+*   **全局注册表**: `ULandmarkSubsystem` 维护 `Type -> URTSCommandGridAsset*` 的映射。
+*   **自动化配置**: 运行时扫描 `AORTSCityActor` 模板，自动提取并注册其 `CommandGrid`。
+*   **UI 联动**: `RTSCommanderGridWidget` 根据选中组的 `ActiveGroupKey` 自动向 Subsystem 请求对应的网格资产进行显示。
+
+### 5. 去重与 Representation 机制
+为了保持高性能，系统采用了 **"Spawn-on-Demand"** 策略：
+*   **模板认领**: 场景中放置的城市 Actor 仅作为配置模板。
+*   **物理去重**: 启动时 `Subsystem` 识别模板后会将其 `Destroy()`，并根据 JSON 数据由 `MassBattleAgentSubsystem` 统一生成 Entity。
+*   **Representation**: 城市 Actor 全程由 Mass 托管，仅在满足 LOD 条件时动态显示，防止冗余运行。
+
+### 6. 初始场景单位放置 (Initial Scene Unit Placement)
+LandmarkSystem 现在承担两类初始单位放置职责：
+
+*   **地图数据批量点位**: JSON 中的每个地标表示一个单点单位或建筑。适合“一个单位，大量点”的地图初始化，例如城市、据点、资源点。`Type` 决定使用哪个 `MassConfig`，`Team` 决定生成阵营。
+*   **场景代理批量单位**: `MassUnitInHere` 是可直接摆在关卡里的编辑器代理 Actor。它表示“一个点，大量单位”，适合初始军团、防守部队、测试战斗编队等。
+
+运行时流程：
+
+1.  `ULandmarkSubsystem` 用完整关卡包路径精确查找 `MapProfiles`，并只加载该条目绑定的 `Content/MapData/*.json`；没有条目时不加载地标文件。
+2.  按 `(Type, Team)` 分组。
+3.  通过 `ULandmarkSettings::CityLevelConfigs` 查找 `MassConfig`。
+4.  将每个点生成对应 Team 的 Mass Entity。
+
+`MassUnitInHere` 不依赖 JSON。它在 `BeginPlay` 按自身位置、旋转、数量、间距和 Team 生成一组 Mass Entity，然后销毁自身。
+
+当前约定：
+
+*   JSON 路线用于大量离散地图点。
+*   `MassUnitInHere` 路线用于少量手工摆放的局部编队。
+*   Team 颜色、地图边界等共享数据后续应接入每地图配置协议，而不是硬编码在 LandmarkSystem 内部。
+
+## License
+MIT License. See LICENSE file.
