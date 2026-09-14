@@ -91,7 +91,8 @@ struct FLandmarkInstanceData
 
     /**
      * Optional per-culture display names. Keys use Unreal/IETF culture names
-     * such as "en", "zh-Hans", "zh-Hant", "ja", "ko", or "ru".
+     * such as "en", "zh", "ja", "ko", or "ru". All Chinese cultures use
+     * the simplified-Chinese "zh" entry.
      * This is presentation-only data and must never be used as landmark identity.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landmark|Localization")
@@ -131,11 +132,7 @@ struct FLandmarkInstanceData
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     int32 Team = 0;
 
-	/**
-	 * Total factory count owned by this city. At map load it is never lower
-	 * than the city's Victory Point value; physically constructed factories
-	 * are added on top of that intrinsic capacity.
-	 */
+	/** Total factories, including intrinsic VP capacity and constructed factories. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "City|Economy", meta = (ClampMin = "0"))
 	int32 FactoryCount = 0;
 

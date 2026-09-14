@@ -61,10 +61,7 @@ void ALandmarkMapLabelProxy::BeginPlay()
 		Data.ZMin = MinVisibleHeight;
         Data.ZMax = MaxVisibleHeight;
 
-		/*
-		Data.LinkedActor = nullptr; // Static proxies don't need link? Or maybe we want to move them?
-        // Actually, if it's EditorOnly, it won't exist in game. So no link.
-        */
+		// Static proxies register immutable positions and do not need an actor link.
 		Data.LinkedActor = nullptr; 
 
 		Subsystem->RegisterLandmark(Data);
@@ -77,6 +74,7 @@ void ALandmarkMapLabelProxy::PostEditChangeProperty(FPropertyChangedEvent& Prope
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 	UpdateVisuals();
 }
+#endif
 
 void ALandmarkMapLabelProxy::SnapToGround()
 {
@@ -98,7 +96,6 @@ void ALandmarkMapLabelProxy::SnapToGround()
 #endif
 	}
 }
-#endif
 
 void ALandmarkMapLabelProxy::UpdateVisuals()
 {

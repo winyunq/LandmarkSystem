@@ -1,5 +1,11 @@
 #include "LandmarkSettings.h"
 
+#if WITH_EDITOR
+#include "MassUnitInHere.h"
+#include "Engine/World.h"
+#include "UObject/UObjectIterator.h"
+#endif
+
 ULandmarkSettings::ULandmarkSettings()
 {
     CityLabelZOffset = 64.0f;
@@ -69,3 +75,17 @@ const FLandmarkMapProfile* ULandmarkSettings::FindMapProfile(
                     Profile.MapPackagePath.ToString(), ESearchCase::IgnoreCase);
         });
 }
+
+#if WITH_EDITOR
+void ULandmarkSettings::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+    Super::PostEditChangeProperty(PropertyChangedEvent);
+    for (TObjectIterator<AMassUnitInHere> It; It; ++It)
+    {
+        if (!It->IsTemplate() && It->GetWorld() && !It->GetWorld()->IsGameWorld())
+        {
+            It->RefreshQuantity();
+        }
+    }
+}
+#endif

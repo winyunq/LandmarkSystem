@@ -21,6 +21,7 @@
 #include "Minimap/MapPackageProfilePaths.h"
 #include "Renderers/MassBattleAgentRenderer.h"
 #include "RTSMoveNavigationProvider.h"
+#include "RTSInputPanelSettings.h"
 #include "Subsystems/MassBattleNetworkSubsystem.h"
 
 AMassUnitInHere::AMassUnitInHere()
@@ -33,9 +34,124 @@ AMassUnitInHere::AMassUnitInHere()
 	PreviewMeshComponent->SetCastShadow(true);
 }
 
+EUnitHereScalePreset AMassUnitInHere::GetResolvedScalePreset() const
+{
+    if (ScalePreset != EUnitHereScalePreset::Automatic || !AgentConfig)
+    {
+        return ScalePreset;
+    }
+    // Legacy infantry assets are not all registered in the RTS protocol yet.
+    // Their existing canonical content family is authoritative, not their proxy SubType.
+    if (AgentConfig->GetPathName().StartsWith(TEXT("/Game/Unit/Actor/Army/Infantry/")))
+    {
+        return EUnitHereScalePreset::Infantry;
+    }
+    const FRTSMassUnitTypeProtocol* Protocol = RTSUnitTypeProtocol::FindByNetworkKeyOrSubType(
+        RTSUnitTypeProtocol::GetSettings(), FName(*AgentConfig->GetPathName()), AgentConfig->SubType.Index);
+    if (!Protocol)
+    {
+        return EUnitHereScalePreset::Automatic;
+    }
+    const FName ClassName = Protocol->UnitTypeTag.GetTagName();
+    if (ClassName == TEXT("RTS.UnitClass.Infantry") || ClassName == TEXT("RTS.UnitClass.Officer"))
+    {
+        return EUnitHereScalePreset::Infantry;
+    }
+    if (ClassName == TEXT("RTS.UnitClass.Air"))
+    {
+        return EUnitHereScalePreset::Aircraft;
+    }
+    if (ClassName == TEXT("RTS.UnitClass.Naval"))
+    {
+        return EUnitHereScalePreset::Ship;
+    }
+    if (ClassName == TEXT("RTS.UnitClass.Armor"))
+    {
+        // Same canonical tank family used by RTSUnitTypeProtocol defaults.
+        return Protocol->UnitAssetPath.StartsWith(TEXT("/Game/Unit/Actor/Army/Tank/"))
+            ? EUnitHereScalePreset::Tank : EUnitHereScalePreset::Vehicle;
+    }
+    return EUnitHereScalePreset::Automatic;
+}
+
+double AMassUnitInHere::GetResolvedScaleFactor() const
+{
+    switch (GetResolvedScalePreset())
+    {
+    case EUnitHereScalePreset::Infantry: return 16.0;
+    case EUnitHereScalePreset::Vehicle: return 8.0;
+    case EUnitHereScalePreset::Tank: return 4.0;
+    case EUnitHereScalePreset::Aircraft: return 2.0 * FMath::Sqrt(2.0);
+    case EUnitHereScalePreset::Ship: return 2.0;
+    case EUnitHereScalePreset::Custom: return ScaleFactor;
+    default: return 0.0;
+    }
+}
+
+int32 AMassUnitInHere::GetResolvedScaleIterations() const
+{
+    return static_cast<int32>(bOverrideScaleLevel
+        ? ScaleLevel : ULandmarkSettings::Get()->UnitHereDefaultScaleLevel);
+}
+
+int32 AMassUnitInHere::GetResolvedQuantity() const
+{
+    if (!bUseSourceQuantity)
+    {
+        return FMath::Max(1, Quantity);
+    }
+    const double Factor = GetResolvedScaleFactor();
+    int32 Iterations = GetResolvedScaleIterations();
+    if (SourceQuantity < 0 || !FMath::IsFinite(Factor) || Factor < 1.0
+        || Iterations < 0 || Iterations > static_cast<int32>(EUnitHereScaleLevel::Division))
+    {
+        return -1;
+    }
+    if (SourceQuantity == 0)
+    {
+        return 0;
+    }
+    // Integer presets use exact ceiling division, including int64 source inputs.
+    // Aircraft pairs of levels are exactly 8:1; do not round sqrt(2) first.
+    double IntegerFactor = Factor;
+    if (GetResolvedScalePreset() == EUnitHereScalePreset::Aircraft && Iterations % 2 == 0)
+    {
+        IntegerFactor = 8.0;
+        Iterations /= 2;
+    }
+    if (IntegerFactor <= MAX_int32 && IntegerFactor == FMath::FloorToDouble(IntegerFactor))
+    {
+        const int64 Divisor = static_cast<int64>(IntegerFactor);
+        int64 Result = SourceQuantity;
+        for (int32 Index = 0; Index < Iterations; ++Index)
+        {
+            Result = Result / Divisor + (Result % Divisor != 0 ? 1 : 0);
+        }
+        return Result <= MAX_int32 ? static_cast<int32>(Result) : -1;
+    }
+    const double Divisor = FMath::Pow(Factor, static_cast<double>(Iterations));
+    const double Result = FMath::CeilToDouble(static_cast<double>(SourceQuantity) / Divisor);
+    return Result <= MAX_int32 ? FMath::Max(1, static_cast<int32>(Result)) : -1;
+}
+
+void AMassUnitInHere::RefreshQuantity()
+{
+    if (bUseSourceQuantity)
+    {
+        Quantity = GetResolvedQuantity();
+    }
+}
+
+void AMassUnitInHere::PostLoad()
+{
+    Super::PostLoad();
+    RefreshQuantity();
+}
+
 void AMassUnitInHere::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+	RefreshQuantity();
 	UpdatePreview();
 }
 
@@ -151,7 +267,7 @@ int32 AMassUnitInHere::InitializeAllLevelUnits(UWorld& World)
 	for (AMassUnitInHere* Placement : Placements)
 	{
 		const int32 PlacementQuantity = Placement
-			? FMath::Max(1, Placement->Quantity)
+			? Placement->GetResolvedQuantity()
 			: 0;
 		if (Placement && Placement->InitializeLevelUnits(true))
 		{
@@ -223,9 +339,19 @@ bool AMassUnitInHere::InitializeLevelUnits(const bool bForceSynchronous)
 			*GetName());
 		return false;
 	}
+	const int32 SafeQuantity = GetResolvedQuantity();
+	if (SafeQuantity < 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("MassUnitInHere [%s] invalid source quantity, coefficient or scale level."), *GetName());
+		return false;
+	}
 	bLevelUnitsInitialized = true;
-
-	const int32 SafeQuantity = FMath::Max(1, Quantity);
+	if (SafeQuantity == 0)
+	{
+		UE_LOG(LogTemp, Display, TEXT("MassUnitInHere [%s] level spawn completed: Spawned=0 Team=%d."), *GetName(), Team);
+		Destroy();
+		return true;
+	}
 
 	FAgentSpawnRectangleShapeData Shape;
 	const float SideCount = FMath::CeilToFloat(FMath::Sqrt(static_cast<float>(SafeQuantity)));

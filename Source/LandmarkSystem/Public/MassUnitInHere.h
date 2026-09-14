@@ -5,10 +5,24 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "MassEntityTypes.h"
+#include "LandmarkSettings.h"
 #include "MassUnitInHere.generated.h"
 
 class UMassBattleAgentConfigDataAsset;
 class UStaticMeshComponent;
+
+/** Automatic uses the existing RTS unit protocol; Custom accepts a real coefficient. */
+UENUM(BlueprintType)
+enum class EUnitHereScalePreset : uint8
+{
+    Automatic UMETA(DisplayName = "自动（按单位分类）"),
+    Infantry UMETA(DisplayName = "步兵（16）"),
+    Vehicle UMETA(DisplayName = "战车（8）"),
+    Tank UMETA(DisplayName = "坦克（4）"),
+    Aircraft UMETA(DisplayName = "飞机（2√2）"),
+    Ship UMETA(DisplayName = "船（2）"),
+    Custom UMETA(DisplayName = "自定义")
+};
 
 /**
  * Editor placement actor for spawning a local group of Mass units.
@@ -28,6 +42,25 @@ public:
 	 */
 	static int32 InitializeAllLevelUnits(UWorld& World);
 
+	/** Returns ceil(SourceQuantity / ScaleFactor^iterations), or -1 for invalid/out-of-range input. */
+	UFUNCTION(BlueprintPure, Category = "Mass Unit In Here|Quantity")
+	int32 GetResolvedQuantity() const;
+
+	UFUNCTION(BlueprintPure, Category = "Mass Unit In Here|Quantity")
+	int32 GetResolvedScaleIterations() const;
+
+	UFUNCTION(BlueprintPure, Category = "Mass Unit In Here|Quantity")
+	EUnitHereScalePreset GetResolvedScalePreset() const;
+
+	UFUNCTION(BlueprintPure, Category = "Mass Unit In Here|Quantity")
+	double GetResolvedScaleFactor() const;
+
+	/** Refresh the displayed quantity; spawning always resolves the source again. */
+	UFUNCTION(CallInEditor, Category = "Mass Unit In Here|Quantity", meta = (DisplayName = "刷新生成数量"))
+	void RefreshQuantity();
+
+	virtual void PostLoad() override;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -41,8 +74,33 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mass Unit In Here")
 	TObjectPtr<UMassBattleAgentConfigDataAsset> AgentConfig;
 
-	/** 生成数量 */
-	UPROPERTY(EditAnywhere, Category = "Mass Unit In Here", meta = (ClampMin = "1", UIMin = "1"))
+	/** Old placements retain their explicit Quantity until explicitly migrated. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mass Unit In Here|Quantity", meta = (DisplayName = "使用原始数量换算"))
+	bool bUseSourceQuantity = false;
+
+	/** 原始装备数/人数；0 表示不生成，不会强制补成一个单位。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mass Unit In Here|Quantity", meta = (DisplayName = "原始数量", ClampMin = "0", EditCondition = "bUseSourceQuantity"))
+	int64 SourceQuantity = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mass Unit In Here|Quantity", meta = (DisplayName = "转换系数档位", EditCondition = "bUseSourceQuantity"))
+	EUnitHereScalePreset ScalePreset = EUnitHereScalePreset::Automatic;
+
+	/** 自定义的每层转换系数，允许小数。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mass Unit In Here|Quantity", meta = (DisplayName = "自定义系数", ClampMin = "1", EditCondition = "bUseSourceQuantity && ScalePreset == EUnitHereScalePreset::Custom", EditConditionHides))
+	double ScaleFactor = 4.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mass Unit In Here|Quantity", meta = (DisplayName = "单独指定编制", EditCondition = "bUseSourceQuantity"))
+	bool bOverrideScaleLevel = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mass Unit In Here|Quantity", meta = (DisplayName = "目标编制", EditCondition = "bUseSourceQuantity && bOverrideScaleLevel", EditConditionHides))
+	EUnitHereScaleLevel ScaleLevel = EUnitHereScaleLevel::Regiment;
+
+	/** 来源存档中的记录 ID；作为可追溯元数据，不参与数量换算。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mass Unit In Here|Quantity", meta = (DisplayName = "原始数据记录"))
+	FString SourceRecordId;
+
+	/** 原始数量模式下是只读预览；旧模式保持直接填写生成数量。 */
+	UPROPERTY(EditAnywhere, Category = "Mass Unit In Here|Quantity", meta = (DisplayName = "生成数量", ClampMin = "1", UIMin = "1", EditCondition = "!bUseSourceQuantity"))
 	int32 Quantity = 16;
 
 	/** 阵营 ID */

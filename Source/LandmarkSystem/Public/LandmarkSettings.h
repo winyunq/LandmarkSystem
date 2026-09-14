@@ -7,6 +7,26 @@
 class UMassBattleAgentConfigDataAsset;
 class URTSCommandGridAsset;
 
+/** Global target formation level; the unit category supplies the branching factor. */
+UENUM(BlueprintType)
+enum class EUnitHereScaleLevel : uint8
+{
+    Individual = 0 UMETA(DisplayName = "原始（不缩放）"),
+    Platoon = 1 UMETA(DisplayName = "排"),
+    Company = 2 UMETA(DisplayName = "连"),
+    Regiment = 3 UMETA(DisplayName = "团"),
+    Division = 4 UMETA(DisplayName = "师")
+};
+
+/** Backward-compatible legacy policy; normal HUD display now uses the selected JSON directly. */
+UENUM(BlueprintType)
+enum class ELandmarkDefaultNameMode : uint8
+{
+	CityTeam UMETA(DisplayName = "City Team / Role Language"),
+	ClientCulture UMETA(DisplayName = "Client Culture"),
+	CityGeographic UMETA(DisplayName = "City Geographic Language")
+};
+
 /** One exact world-package to landmark-data binding. */
 USTRUCT(BlueprintType)
 struct FLandmarkMapProfile
@@ -81,6 +101,15 @@ public:
 
 	static const ULandmarkSettings* Get();
 
+	/** UnitHere 默认目标编制；各单位按自己的类别系数自动换算。 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Unit Here",
+		meta = (DisplayName = "全局目标编制"))
+	EUnitHereScaleLevel UnitHereDefaultScaleLevel = EUnitHereScaleLevel::Regiment;
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
 	/** 城市 HUD 标签相对地面点的 Z 偏移。 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "City Configs")
 	float CityLabelZOffset = 64.0f;
@@ -102,11 +131,16 @@ public:
 	 * Optional unified city-name table relative to Content/MapData. The table
 	 * format is the localization_table/CityNames_AllLanguages.json file from the
 	 * multilingual city package. Leave empty to use only embedded names or
-	 * culture-specific map files such as Content/MapData/zh-Hans/<LandmarkFile>.
+	 * culture-specific map files such as Content/MapData/zh/<LandmarkFile>.
 	 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Localization")
 	FString CityNameLocalizationTableFile =
 		TEXT("localization_table/CityNames_AllLanguages.json");
+
+	/** Legacy compatibility setting; the selected culture JSON now owns the HUD name. */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Localization")
+	ELandmarkDefaultNameMode DefaultNameMode =
+		ELandmarkDefaultNameMode::ClientCulture;
 
 	/** 战役开局强制所有城市归属 Team 0（中立/野怪）。 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "City Configs")

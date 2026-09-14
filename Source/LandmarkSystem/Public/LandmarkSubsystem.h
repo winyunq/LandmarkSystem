@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "CanvasItem.h"
 #include "Curves/CurveFloat.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "LandmarkTypes.h"
@@ -183,6 +184,18 @@ protected:
 	void RebuildSpatialGrid();
 
 private:
+	// Prepared by registration/data changes; DrawLandmarks only positions and submits these items.
+	struct FLandmarkText
+	{
+		FCanvasTextItem Name{FVector2D::ZeroVector, FText::GetEmpty(), static_cast<UFont*>(nullptr), FLinearColor::White};
+		FCanvasTextItem VictoryPoints{FVector2D::ZeroVector, FText::GetEmpty(), static_cast<UFont*>(nullptr), FLinearColor::White};
+		FVector2D NameSize = FVector2D::ZeroVector;
+		FVector2D VictoryPointsSize = FVector2D::ZeroVector;
+	};
+	TMap<FString, FLandmarkText> LandmarkText;
+	void PrepareLandmarkText(const FString& ID, const FLandmarkInstanceData& Data);
+	void RebuildLandmarkText();
+
 	bool bMapInitializationReady = false;
 	/** 批量生成所有城市类型的 Mass 实体，通过 ULandmarkSettings 读取配置 */
 	void BatchSpawnAllCities();
