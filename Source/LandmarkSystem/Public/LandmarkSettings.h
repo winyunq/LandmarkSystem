@@ -78,7 +78,10 @@ struct FCityLevelConfig
 
 	/** 建造一座工厂需要的现金。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "City|Economy", meta = (ClampMin = "0"))
-	float FactoryBuildCost = 365.0f;
+	float FactoryBuildCost = 75.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Economy", meta = (ClampMin = "0"))
+	float FactoryMaterialCost = 365.0f;
 
 	/** 每座工厂在一次（默认 7 天）结算中提供的 GDP。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "City|Economy", meta = (ClampMin = "0"))

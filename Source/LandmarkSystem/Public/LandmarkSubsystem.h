@@ -17,6 +17,7 @@ DECLARE_MULTICAST_DELEGATE_FourParams(
 	bool&);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnLandmarkTeamChangedNative, const FLandmarkInstanceData&, int32, int32);
 DECLARE_MULTICAST_DELEGATE(FOnLandmarksInitializedNative);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnLandmarkVictoryPointsDeltaNative, int32, int32);
 
 struct FRTSSelectionView;
 struct FRTSUnitData;
@@ -55,6 +56,13 @@ public:
 
 	/** Fired once all map-authored landmark, city, and level-unit initialization is complete. */
 	FOnLandmarksInitializedNative OnLandmarksInitializedNative;
+
+	/** City-owned score changes; subscribers receive the already resolved team and delta. */
+	FOnLandmarkVictoryPointsDeltaNative OnVictoryPointsDeltaNative;
+	FOnLandmarksInitializedNative OnVictoryPointsResetNative;
+	FOnLandmarksInitializedNative OnVictoryPointsSettledNative;
+	void ReportVictoryPointsTransfer(const FLandmarkInstanceData& Data, int32 PreviousTeam, int32 NewTeam);
+	void ReportVictoryPointsDelta(const FLandmarkInstanceData& Data, int32 Sign);
 
 	/** True while/after map-authored entities are ready for deterministic Tick-0 extensions. */
 	bool IsMapInitializationReady() const { return bMapInitializationReady; }
@@ -145,6 +153,7 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "LandmarkSystem|Economy")
 	float GetFactoryBuildCost(const FString& Type) const;
+	float GetFactoryMaterialCost(const FString& Type) const;
 
 	UFUNCTION(BlueprintPure, Category = "LandmarkSystem|Economy")
 	float GetGDPPerFactoryPerSettlement(const FString& Type) const;

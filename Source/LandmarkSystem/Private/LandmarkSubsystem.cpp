@@ -465,6 +465,7 @@ static FAutoConsoleCommandWithWorldAndArgs GDebugCaptureFirstCityCommand(
 void ULandmarkSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	OnLandmarkTeamChangedNative.AddUObject(this, &ULandmarkSubsystem::ReportVictoryPointsTransfer);
 	CommandGridResolverHandle = URTSSelectionSubsystem::OnResolveMassCommandGrid().AddUObject(
 		this, &ULandmarkSubsystem::ResolveMassCommandGrid);
 	UnitDataEnricherHandle = URTSSelectionSubsystem::OnEnrichMassUnitData().AddUObject(
@@ -738,6 +739,7 @@ void ULandmarkSubsystem::BatchSpawnAllCities()
         if (Data.Value == 0)
         {
             Data.Value = GetDefaultVictoryPoints(Data.Type);
+            ReportVictoryPointsDelta(Data, 1);
             PrepareLandmarkText(Pair.Key, Data);
         }
         // A city intrinsically owns one level-one factory per Victory Point.
@@ -820,7 +822,6 @@ TArray<FEntityHandle> ULandmarkSubsystem::BatchSpawnCityType(
 		if (FStyleType* Style = CityData->GetMutableFragment<FStyleType>())
 		{
 			Style->Index = FMath::Clamp(Cfg->VisualLevel, 1, 5);
-			Style->Variant = ActiveFlagSetIndex;
 		}
 		if (FDeath* Death = CityData->GetMutableFragment<FDeath>())
 		{
@@ -915,12 +916,11 @@ TArray<FEntityHandle> ULandmarkSubsystem::BatchSpawnCityType(
         return {};
     }
 
-    auto ApplyCityStyle = [Cfg, this](FMassEntityTemplateData& TemplateData)
+    auto ApplyCityStyle = [Cfg](FMassEntityTemplateData& TemplateData)
     {
         if (FStyleType* Style = TemplateData.GetMutableFragment<FStyleType>())
         {
             Style->Index = FMath::Clamp(Cfg->VisualLevel, 1, 5);
-            Style->Variant = ActiveFlagSetIndex;
         }
     };
     ApplyCityStyle(*GameplayData);
@@ -1267,6 +1267,14 @@ float ULandmarkSubsystem::GetFactoryBuildCost(const FString& Type) const
 			return Config->FactoryBuildCost;
 		}
 	}
+	return 75.0f;
+}
+
+float ULandmarkSubsystem::GetFactoryMaterialCost(const FString& Type) const
+{
+	if (const ULandmarkSettings* Settings = ULandmarkSettings::Get())
+		if (const FCityLevelConfig* Config = Settings->FindCityConfig(Type))
+			return Config->FactoryMaterialCost;
 	return 365.0f;
 }
 
@@ -1894,6 +1902,9 @@ void ULandmarkSubsystem::Deinitialize()
 	URTSSelectionSubsystem::OnResolveMassCommandGrid().Remove(CommandGridResolverHandle);
 	URTSSelectionSubsystem::OnEnrichMassUnitData().Remove(UnitDataEnricherHandle);
 	OnLandmarkTeamChangedNative.Clear();
+	OnVictoryPointsDeltaNative.Clear();
+	OnVictoryPointsResetNative.Clear();
+	OnVictoryPointsSettledNative.Clear();
 	RegisteredLandmarks.Empty();
 	LandmarkText.Empty();
 	CityFlagEntities.Empty();
@@ -1921,7 +1932,12 @@ void ULandmarkSubsystem::RegisterLandmark(const FLandmarkInstanceData& Data)
         {
             Existing.LinkedActor = Data.LinkedActor;
             if (!Data.Name.IsEmpty()) Existing.Name = Data.Name;
-            if (Existing.Value == 0 && Data.Value > 0) Existing.Value = Data.Value;
+            if (Existing.Value == 0 && Data.Value > 0)
+            {
+                Existing.Value = Data.Value;
+                ReportVictoryPointsDelta(Existing, 1);
+                OnVictoryPointsSettledNative.Broadcast();
+            }
             PrepareLandmarkText(SafeID, Existing);
         }
         return;
@@ -1932,6 +1948,7 @@ void ULandmarkSubsystem::RegisterLandmark(const FLandmarkInstanceData& Data)
 
 	// 纯数据注册，城市 Agent 的 Mass Entity 由 SpawnCityAgents 统一创建
 	RegisteredLandmarks.Add(SafeID, NewData);
+	ReportVictoryPointsDelta(NewData, 1);
 	PrepareLandmarkText(SafeID, NewData);
 	BumpLandmarkRevision();
 
@@ -1942,17 +1959,36 @@ void ULandmarkSubsystem::RegisterLandmark(const FLandmarkInstanceData& Data)
         FIntPoint Cell(FMath::FloorToInt(Loc.X / SpatialCellSize), FMath::FloorToInt(Loc.Y / SpatialCellSize));
         SpatialGrid.FindOrAdd(Cell).AddUnique(SafeID);
     }
+	if (bMapInitializationReady) OnVictoryPointsSettledNative.Broadcast();
 }
 
+void ULandmarkSubsystem::ReportVictoryPointsDelta(const FLandmarkInstanceData& Data, int32 Sign)
+{
+	if (Data.Team > 0 && Data.Type.StartsWith(TEXT("City")) && Data.Value > 0)
+	{
+		OnVictoryPointsDeltaNative.Broadcast(Data.Team, Sign * Data.Value);
+	}
+}
 
+void ULandmarkSubsystem::ReportVictoryPointsTransfer(
+	const FLandmarkInstanceData& Data, int32 PreviousTeam, int32 NewTeam)
+{
+	if (PreviousTeam == NewTeam || !Data.Type.StartsWith(TEXT("City")) || Data.Value <= 0) return;
+	if (PreviousTeam > 0) OnVictoryPointsDeltaNative.Broadcast(PreviousTeam, -Data.Value);
+	if (NewTeam > 0) OnVictoryPointsDeltaNative.Broadcast(NewTeam, Data.Value);
+	OnVictoryPointsSettledNative.Broadcast();
+}
 
 void ULandmarkSubsystem::UpdateLandmark(const FString& ID, const FLandmarkInstanceData& NewData)
 {
 	if (RegisteredLandmarks.Contains(ID))
 	{
+		ReportVictoryPointsDelta(RegisteredLandmarks[ID], -1);
 		RegisteredLandmarks[ID] = NewData;
+		ReportVictoryPointsDelta(NewData, 1);
 		PrepareLandmarkText(ID, NewData);
 		BumpLandmarkRevision();
+		OnVictoryPointsSettledNative.Broadcast();
 	}
 }
 
@@ -1961,6 +1997,7 @@ void ULandmarkSubsystem::UnregisterLandmark(const FString& ID)
     // Remove from Spatial Grid first (while we have Data)
     if (FLandmarkInstanceData* Data = RegisteredLandmarks.Find(ID))
     {
+        ReportVictoryPointsDelta(*Data, -1);
         if (SpatialCellSize > 0)
         {
              FVector Loc = Data->GetLocation();
@@ -1977,6 +2014,7 @@ void ULandmarkSubsystem::UnregisterLandmark(const FString& ID)
 	{
 		LandmarkText.Remove(ID);
 		BumpLandmarkRevision();
+		OnVictoryPointsSettledNative.Broadcast();
 	}
 }
 
@@ -1985,6 +2023,7 @@ void ULandmarkSubsystem::UnregisterAll()
 	if (!RegisteredLandmarks.IsEmpty())
 	{
 		RegisteredLandmarks.Empty();
+		OnVictoryPointsResetNative.Broadcast();
 		LandmarkText.Empty();
 		BumpLandmarkRevision();
 	}
@@ -2034,6 +2073,7 @@ bool ULandmarkSubsystem::LoadLandmarksFromFile(const FString& FileName)
     if (FJsonSerializer::Deserialize(Reader, JsonArray))
     {
         RegisteredLandmarks.Reset();
+        OnVictoryPointsResetNative.Broadcast();
         LandmarkText.Reset();
         BumpLandmarkRevision();
         SpatialGrid.Reset();

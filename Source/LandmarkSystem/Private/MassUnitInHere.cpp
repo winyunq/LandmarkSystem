@@ -7,7 +7,6 @@
 #include "EngineUtils.h"
 #include "Fragments/Health.h"
 #include "Fragments/HealthBar.h"
-#include "Fragments/StyleType.h"
 #include "FuncLibs/MassBattleFuncLib.h"
 #include "LandmarkSubsystem.h"
 #include "LandmarkSettings.h"
@@ -18,7 +17,6 @@
 #include "MassEntityTypes.h"
 #include "Misc/ScopeExit.h"
 #include "Templates/UnrealTemplate.h"
-#include "Minimap/MapPackageProfilePaths.h"
 #include "Renderers/MassBattleAgentRenderer.h"
 #include "RTSMoveNavigationProvider.h"
 #include "RTSInputPanelSettings.h"
@@ -179,46 +177,6 @@ void AMassUnitInHere::UpdatePreview()
 	{
 		PreviewMeshComponent->SetStaticMesh(CDO->AgentMesh);
 	}
-}
-
-bool AMassUnitInHere::IsConfiguredCityUnit() const
-{
-	if (!AgentConfig)
-	{
-		return false;
-	}
-
-	const ULandmarkSettings* Settings = ULandmarkSettings::Get();
-	if (!Settings)
-	{
-		return false;
-	}
-
-	const FSoftObjectPath AgentPath(AgentConfig);
-	for (const FCityLevelConfig& CityConfig : Settings->CityLevelConfigs)
-	{
-		if (CityConfig.MassConfig.Get() == AgentConfig
-			|| CityConfig.MassConfig.ToSoftObjectPath() == AgentPath)
-		{
-			return true;
-		}
-	}
-	return false;
-}
-
-int32 AMassUnitInHere::ResolveMapFlagSetIndex() const
-{
-	const UWorld* World = GetWorld();
-	const ULandmarkSettings* Settings = ULandmarkSettings::Get();
-	if (!World || !Settings)
-	{
-		return 0;
-	}
-
-	const FString MapPackagePath =
-		MassBattleMapProfilePaths::GetCanonicalMapPackagePath(World);
-	const FLandmarkMapProfile* MapProfile = Settings->FindMapProfile(MapPackagePath);
-	return MapProfile ? FMath::Max(0, MapProfile->FlagSetIndex) : 0;
 }
 
 void AMassUnitInHere::BeginPlay()
@@ -450,24 +408,14 @@ void AMassUnitInHere::ApplySpawnOverrides(const TArray<FEntityHandle>& SpawnedEn
 		return;
 	}
 
-	const bool bCityUnit = IsConfiguredCityUnit();
-	if ((bCityUnit || HealthOverride > 0.f || bOverrideHealthBarVisibility)
+	if ((HealthOverride > 0.f || bOverrideHealthBarVisibility)
 		&& SpawnedEntities.Num() > 0)
 	{
 		if (UMassEntitySubsystem* EntitySubsystem = World->GetSubsystem<UMassEntitySubsystem>())
 		{
 			FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
-			const int32 FlagSetIndex = bCityUnit ? ResolveMapFlagSetIndex() : 0;
 			for (const FEntityHandle& Handle : SpawnedEntities)
 			{
-				if (bCityUnit)
-				{
-					if (FStyleType* Style = EntityManager.GetFragmentDataPtr<FStyleType>(Handle))
-					{
-						Style->Variant = FlagSetIndex;
-					}
-				}
-
 				if (HealthOverride > 0.f)
 				{
 					if (FHealth* HealthFragment = EntityManager.GetFragmentDataPtr<FHealth>(Handle))

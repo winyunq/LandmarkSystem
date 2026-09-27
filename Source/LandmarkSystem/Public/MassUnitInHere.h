@@ -138,8 +138,6 @@ private:
 	TObjectPtr<UStaticMeshComponent> PreviewMeshComponent;
 
 	void UpdatePreview();
-	bool IsConfiguredCityUnit() const;
-	int32 ResolveMapFlagSetIndex() const;
 	bool InitializeLevelUnits(bool bForceSynchronous);
 	void ApplySpawnOverrides(const TArray<FEntityHandle>& SpawnedEntities);
 	bool bLevelUnitsInitialized = false;

@@ -32,7 +32,7 @@ ULandmarkSettings::ULandmarkSettings()
         Cfg.TypeName = Type;
         Cfg.MassConfig = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(DefaultConfigPath));
         Cfg.VisualLevel = VisualLevel;
-        Cfg.FactoryBuildCost = 365.0f;
+        Cfg.FactoryBuildCost = 75.0f;
         Cfg.GDPPerFactoryPerSettlement = GDPPerFactory;
         return Cfg;
     };
