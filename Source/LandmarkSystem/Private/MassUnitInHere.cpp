@@ -297,6 +297,20 @@ bool AMassUnitInHere::InitializeLevelUnits(const bool bForceSynchronous)
 			*GetName());
 		return false;
 	}
+	const FSoftObjectPath BaseConfig(AgentConfig->GetPathName());
+	const FSoftObjectPath CountryConfig = RTSUnitTypeProtocol::ResolveCountryTankConfig(this, Team, BaseConfig);
+	if (CountryConfig != BaseConfig)
+	{
+		if (UMassBattleAgentConfigDataAsset* Variant = Cast<UMassBattleAgentConfigDataAsset>(CountryConfig.TryLoad()))
+		{
+			AgentConfig = Variant;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("MassUnitInHere [%s] country tank config missing: %s"),
+				*GetName(), *CountryConfig.ToString());
+		}
+	}
 	const int32 SafeQuantity = GetResolvedQuantity();
 	if (SafeQuantity < 0)
 	{
