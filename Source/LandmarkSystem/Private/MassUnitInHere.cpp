@@ -17,7 +17,7 @@
 #include "MassEntityTypes.h"
 #include "Misc/ScopeExit.h"
 #include "Templates/UnrealTemplate.h"
-#include "Renderers/MassBattleAgentRenderer.h"
+#include "Rendering/MassBattleAgentRenderer.h"
 #include "RTSMoveNavigationProvider.h"
 #include "RTSInputPanelSettings.h"
 #include "Subsystems/MassBattleNetworkSubsystem.h"
@@ -25,9 +25,9 @@
 AMassUnitInHere::AMassUnitInHere()
 {
 	PrimaryActorTick.bCanEverTick = false;
-
 	PreviewMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PreviewMesh"));
-	RootComponent = PreviewMeshComponent;
+	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
+	PreviewMeshComponent->SetupAttachment(RootComponent);
 	PreviewMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	PreviewMeshComponent->SetCastShadow(true);
 }
@@ -159,23 +159,36 @@ void AMassUnitInHere::UpdatePreview()
 	{
 		return;
 	}
-
+	if (RootComponent == PreviewMeshComponent)
+	{
+		USceneComponent* SceneRoot = Cast<USceneComponent>(GetDefaultSubobjectByName(TEXT("SceneRoot")));
+		if (!SceneRoot)
+		{
+			return;
+		}
+		const FTransform ActorTransform = GetActorTransform();
+		SetRootComponent(SceneRoot);
+		SceneRoot->SetWorldTransform(ActorTransform);
+		PreviewMeshComponent->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepWorldTransform);
+	}
 	if (!AgentConfig)
 	{
 		PreviewMeshComponent->SetStaticMesh(nullptr);
 		return;
 	}
-
 	TSubclassOf<AMassBattleAgentRenderer> RendererClass = AgentConfig->Visualize.RendererClass.LoadSynchronous();
 	if (!RendererClass)
 	{
 		PreviewMeshComponent->SetStaticMesh(nullptr);
 		return;
 	}
-
 	if (const AMassBattleAgentRenderer* CDO = RendererClass->GetDefaultObject<AMassBattleAgentRenderer>())
 	{
 		PreviewMeshComponent->SetStaticMesh(CDO->AgentMesh);
+		FTransform PreviewTransform = CDO->Offset;
+		PreviewTransform.SetTranslation(PreviewTransform.GetTranslation() * AgentConfig->Scaling.Scale);
+		PreviewTransform.SetScale3D(PreviewTransform.GetScale3D() * AgentConfig->Scaling.Scale);
+		PreviewMeshComponent->SetRelativeTransform(PreviewTransform);
 	}
 }
 

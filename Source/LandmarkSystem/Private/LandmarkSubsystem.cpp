@@ -64,7 +64,7 @@
 #include "FuncLibs/MassBattleTagHelpers.h"
 #include "MassBattleEnums.h"
 #include "MassBattleFogVisionSourceFragment.h"
-#include "Renderers/MassBattleAgentRenderer.h"
+#include "Rendering/MassBattleAgentRenderer.h"
 #include "RTSSelectionSubsystem.h"
 #include "RTSSelectionStructs.h"
 #include "HAL/IConsoleManager.h"
@@ -73,6 +73,9 @@
 #include "Misc/Crc.h"
 #include "Internationalization/Culture.h"
 #include "Internationalization/Internationalization.h"
+#include "SceneView.h"
+#include "Engine/LocalPlayer.h"
+#include "Engine/GameViewportClient.h"
 
 DEFINE_LOG_CATEGORY(LogLandmarkSystem);
 
@@ -2477,15 +2480,34 @@ void ULandmarkSubsystem::UpdateCameraState(const FVector& CameraLocation, const 
     }
 
     // Iterate neighbor cells
-    for (int32 x = -CellRadius; x <= CellRadius; ++x)
+    APlayerController* PlayerController = UGameplayStatics::GetPlayerController (GetWorld(), 0);
+        ULocalPlayer* LocalPlayer = PlayerController ? PlayerController->GetLocalPlayer() : nullptr; if (!LocalPlayer || !LocalPlayer->ViewportClient)
     {
-        for (int32 y = -CellRadius; y <= CellRadius; ++y)
+        return;
+            }
+            FSceneViewProjectionData ProjectionData;
+            if (!LocalPlayer->GetProjectionData(LocalPlayer->ViewportClient->Viewport, ProjectionData))
         {
-            FIntPoint TargetCell = CenterCell + FIntPoint(x, y);
-            if (TArray<FString>* ListPtr = SpatialGrid.Find(TargetCell))
+            return;
+                }
+                const FMatrix ViewProjectionMatrix = ProjectionData.ComputeViewProjectionMatrix();
+                const FIntRect ConstrainedViewRect = ProjectionData.GetConstrainedViewRect();
+            
+                const FRichCurve* ScaleRichCurve = ScaleCurve.GetRichCurve();
+            if ( ScaleRichCurve && ScaleRichCurve->IsEmpty())
+                {
+                    ScaleRichCurve = nullptr;
+                }
+                const FRichCurve* AlphaRichCurve = AlphaCurve.GetRichCurve();
+                if (AlphaRichCurve && AlphaRichCurve->IsEmpty())
+                {
+                    AlphaRichCurve = nullptr;
+                }
+            
+                auto ProcessCell = [&](const TArray<FString>& IDs)
             {
                 // Iterate Landmarks in this cell
-                for (const FString& ID : *ListPtr)
+                for (const FString& ID : IDs)
                 {
                     FLandmarkInstanceData* DataPtr = RegisteredLandmarks.Find(ID);
                     if (!DataPtr) continue;
@@ -2514,34 +2536,85 @@ void ULandmarkSubsystem::UpdateCameraState(const FVector& CameraLocation, const 
 
                     // 2. Project
                     FVector2D ScreenPos;
-                    if (ProjectWorldLocationToScreen(FinalLocation, ScreenPos))
+                     bool bProjected;
+                                {
+                                    TRACE_CPUPROFILER_EVENT_SCOPE_STR("LandmarkPointProjection");
+                                    bProjected = FSceneView::ProjectWorldToScreen(
+                                        FinalLocation, ConstrainedViewRect, ViewProjectionMatrix, ScreenPos); if (bProjected)
+                                    {
+                                        ScreenPos -= FVector2D(ConstrainedViewRect.Min);
+                                        bProjected = PlayerController->PostProcessWorldToScreen(FinalLocation, ScreenPos , true ) ;
+                                    }
+                                }
+                                if (bProjected )
                     {
                         VisibleLandmarkIDs.Add(ID);
                         CachedScreenPositions.Add(ScreenPos);
 
                         // --- Dynamic Scaling ---
                         // Evaluate scale based on distance using curve
-                        float ScaleFactor = 1.0f;
-                        if (ScaleCurve.GetRichCurve() && !ScaleCurve.GetRichCurve()->IsEmpty())
-                        {
-                            float Distance = FVector::Dist(CameraLocation, FinalLocation);
-                            ScaleFactor = ScaleCurve.GetRichCurve()->Eval(Distance);
+                        const
+                            float Distance =  (ScaleRichCurve || AlphaRichCurve)
+                                                ? FVector::Dist(CameraLocation, FinalLocation) : 0.0f ;
+                             float ScaleFactor = 1.0f;
+                                            if( ScaleRichCurve ) {
+                                                ScaleFactor = ScaleRichCurve ->Eval(Distance);
                         }
                         CachedScales.Add(ScaleFactor);
 
                         // --- Alpha Fading ---
                         float AlphaFactor = 1.0f;
-                        if (AlphaCurve.GetRichCurve() && !AlphaCurve.GetRichCurve()->IsEmpty())
+                        if (AlphaRichCurve)
                         {
-                            float Distance = FVector::Dist(CameraLocation, FinalLocation);
-                            AlphaFactor = AlphaCurve.GetRichCurve()->Eval(Distance);
+                            
+                            AlphaFactor = AlphaRichCurve->Eval(Distance);
                         }
                         CachedAlphas.Add(AlphaFactor);
                     }
                 }
             }
-        }
-    }
+         ;
+        
+        
+            const int64 CellDiameter = static_cast<int64>(CellRadius) * 2 + 1;
+            if (CellDiameter * CellDiameter > SpatialGrid.Num())
+            {
+                TArray<FIntPoint> OccupiedCells;
+                {
+                    TRACE_CPUPROFILER_EVENT_SCOPE_STR("LandmarkGridQuery");
+                    SpatialGrid.GetKeys(OccupiedCells);
+                    const FIntPoint MinCell = CenterCell - FIntPoint(CellRadius, CellRadius);
+                    const FIntPoint MaxCell = CenterCell + FIntPoint(CellRadius, CellRadius);
+                    OccupiedCells.RemoveAll([&](const FIntPoint& Cell)
+                    {
+                        return Cell.X < MinCell.X || Cell.X > MaxCell.X
+                            || Cell.Y < MinCell.Y || Cell.Y > MaxCell.Y;
+                    });
+                    OccupiedCells.Sort([](const FIntPoint& A, const FIntPoint& B)
+                    {
+                        return A.X < B.X || (A.X == B.X && A.Y < B.Y);
+                    });
+                }
+                for (const FIntPoint& TargetCell : OccupiedCells)
+                {
+                    if (TArray<FString>* ListPtr = SpatialGrid.Find(TargetCell))
+                    {
+                        ProcessCell(*ListPtr); }
+    } }
+        else
+        {
+            for (int32 x = -CellRadius; x <= CellRadius; ++x)
+            {
+                for (int32 y = -CellRadius; y <= CellRadius; ++y)
+                {
+                    FIntPoint TargetCell = CenterCell + FIntPoint(x, y);
+                    if (TArray<FString>* ListPtr = SpatialGrid.Find(TargetCell))
+                    {
+                        ProcessCell(*ListPtr);
+                    }
+                }
+            }
+        } 
 }
 
 void ULandmarkSubsystem::GetVisibleLandmarks(TArray<FLandmarkInstanceData>& OutVisibleLandmarks, TArray<FVector2D>& OutScreenPositions, TArray<float>& OutScales, TArray<float>& OutAlphas)
@@ -2580,7 +2653,7 @@ void ULandmarkSubsystem::PrepareLandmarkText(const FString& ID, const FLandmarkI
     Text.Name.EnableShadow(FLinearColor::Black);
     UCanvas::StrLen(Text.Name.Font, DisplayName, Text.NameSize.X, Text.NameSize.Y, false, nullptr);
 
-    const FString VPString = Data.Value > 0 ? FString::Printf(TEXT("%d 胜利点"), Data.Value) : FString();
+    const FString VPString = Data.Value > 0 ? FText::Format(NSLOCTEXT("LandmarkSystem", "VictoryPointsLabel", "{0} 胜利点"), FText::AsNumber(Data.Value)).ToString() : FString();
     Text.VictoryPoints.Font = VPFont ? VPFont.Get() : Text.Name.Font;
     Text.VictoryPoints.Text = FText::FromString(VPString);
     Text.VictoryPoints.EnableShadow(FLinearColor::Black);
