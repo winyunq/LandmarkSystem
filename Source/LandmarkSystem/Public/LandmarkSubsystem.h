@@ -94,6 +94,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
 	void UpdateCameraState(const FVector& CameraLocation, const FRotator& CameraRotation, float FOV, float ZoomFactor);
 
+	/**
+	 * @brief 复用引擎 Canvas 字形批处理提交已排版文字，避免在项目层另写逐字绘制流程。
+	 */
 	UFUNCTION(BlueprintCallable, Category = "LandmarkSystem")
 	void DrawLandmarks(class UCanvas* InCanvas);
 
@@ -193,15 +196,21 @@ protected:
 	void RebuildSpatialGrid();
 
 private:
-	// Prepared by registration/data changes; DrawLandmarks only positions and submits these items.
+	// Only visible labels retain glyph runs; their glyph textures use the engine font cache.
 	struct FLandmarkText
 	{
-		FCanvasTextItem Name{FVector2D::ZeroVector, FText::GetEmpty(), static_cast<UFont*>(nullptr), FLinearColor::White};
-		FCanvasTextItem VictoryPoints{FVector2D::ZeroVector, FText::GetEmpty(), static_cast<UFont*>(nullptr), FLinearColor::White};
+		FString NameText;
+		FString VictoryPointsText;
+		const UFont* NameTypeface = nullptr;
+		const UFont* VictoryPointsTypeface = nullptr;
+		TOptional<FCanvasShapedTextItem> Name;
+		TOptional<FCanvasShapedTextItem> VictoryPoints;
 		FVector2D NameSize = FVector2D::ZeroVector;
 		FVector2D VictoryPointsSize = FVector2D::ZeroVector;
+		uint64 LastDrawFrame = 0;
 	};
 	TMap<FString, FLandmarkText> LandmarkText;
+	uint64 LandmarkTextDrawFrame = 0;
 	void PrepareLandmarkText(const FString& ID, const FLandmarkInstanceData& Data);
 	void RebuildLandmarkText();
 

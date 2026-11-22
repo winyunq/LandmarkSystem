@@ -76,11 +76,21 @@
 #include "SceneView.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/GameViewportClient.h"
+#include "CanvasTypes.h"
+#include "Fonts/FontCache.h"
+#include "EngineFontServices.h"
+#include "Internationalization/Text.h"
+#include "ProfilingDebugging/CsvProfiler.h"
+#include "BatchedElements.h"
+#include "TextureResource.h"
 
 DEFINE_LOG_CATEGORY(LogLandmarkSystem);
+CSV_DEFINE_CATEGORY(LandmarkLabels, true);
 
 namespace
 {
+	
+
 	void AddCultureCandidate(TArray<FString>& Candidates, const FString& Candidate)
 	{
 		if (!Candidate.IsEmpty())
@@ -2645,78 +2655,116 @@ void ULandmarkSubsystem::GetVisibleLandmarks(TArray<FLandmarkInstanceData>& OutV
 void ULandmarkSubsystem::PrepareLandmarkText(const FString& ID, const FLandmarkInstanceData& Data)
 {
     if (GetWorld()->GetNetMode() == NM_DedicatedServer) return;
+    FLandmarkText* Cached = LandmarkText.Find(ID);
+    if (!Cached) return;
     TRACE_CPUPROFILER_EVENT_SCOPE(Landmark_PrepareText);
-    FLandmarkText& Text = LandmarkText.FindOrAdd(ID);
+    FLandmarkText& Text = *Cached;
     const FString DisplayName = ResolveLandmarkDisplayName(Data);
-    Text.Name.Font = NameFont ? NameFont.Get() : GEngine->GetLargeFont();
-    Text.Name.Text = FText::FromString(DisplayName);
-    Text.Name.EnableShadow(FLinearColor::Black);
-    UCanvas::StrLen(Text.Name.Font, DisplayName, Text.NameSize.X, Text.NameSize.Y, false, nullptr);
-
+    const UFont* CityNameFont = NameFont ? NameFont.Get() : GEngine->GetLargeFont();
+    const UFont* VictoryPointsFont = VPFont ? VPFont.Get() : CityNameFont;
     const FString VPString = Data.Value > 0 ? FText::Format(NSLOCTEXT("LandmarkSystem", "VictoryPointsLabel", "{0} 胜利点"), FText::AsNumber(Data.Value)).ToString() : FString();
-    Text.VictoryPoints.Font = VPFont ? VPFont.Get() : Text.Name.Font;
-    Text.VictoryPoints.Text = FText::FromString(VPString);
-    Text.VictoryPoints.EnableShadow(FLinearColor::Black);
-    UCanvas::StrLen(Text.VictoryPoints.Font, VPString, Text.VictoryPointsSize.X, Text.VictoryPointsSize.Y, false, nullptr);
+    if (Text.Name.IsSet() && Text.NameTypeface == CityNameFont && Text.VictoryPointsTypeface == VictoryPointsFont
+        && Text.NameText == DisplayName && Text.VictoryPointsText == VPString)
+    {
+        return;
+    }
+    const TSharedPtr<FSlateFontCache> FontCache = FEngineFontServices::Get().GetFontCache();
+    if (!FontCache.IsValid()) return;
+    const FShapedGlyphSequenceRef NameGlyphs = FontCache->ShapeBidirectionalText(
+        DisplayName, CityNameFont->GetLegacySlateFontInfo(), 1.0f,
+        TextBiDi::ComputeBaseDirection(DisplayName), ETextShapingMethod::Auto);
+    Text.NameTypeface = CityNameFont;
+    Text.VictoryPointsTypeface = VictoryPointsFont;
+    Text.NameText = DisplayName;
+    Text.VictoryPointsText = VPString;
+    Text.Name.Emplace(FVector2D::ZeroVector, NameGlyphs, FLinearColor::White);
+    Text.Name->EnableShadow(FLinearColor::Black);
+    Text.NameSize = FVector2D(NameGlyphs->GetMeasuredWidth(), NameGlyphs->GetMaxTextHeight());
+
+    Text.VictoryPoints.Reset();
+    Text.VictoryPointsSize = FVector2D::ZeroVector;
+    if (!VPString.IsEmpty())
+    {
+        const FShapedGlyphSequenceRef VPGlyphs = FontCache->ShapeBidirectionalText(
+            VPString, VictoryPointsFont->GetLegacySlateFontInfo(), 1.0f,
+            TextBiDi::ComputeBaseDirection(VPString), ETextShapingMethod::Auto);
+        Text.VictoryPoints.Emplace(FVector2D::ZeroVector, VPGlyphs, FLinearColor(1.0f, 0.84f, 0.0f));
+        Text.VictoryPoints->EnableShadow(FLinearColor::Black);
+        Text.VictoryPointsSize = FVector2D(VPGlyphs->GetMeasuredWidth(), VPGlyphs->GetMaxTextHeight());
+    }
 }
 
 void ULandmarkSubsystem::RebuildLandmarkText()
 {
     LandmarkText.Reset();
-    for (const auto& Pair : RegisteredLandmarks)
-    {
-        PrepareLandmarkText(Pair.Key, Pair.Value);
-    }
 }
 
 void ULandmarkSubsystem::DrawLandmarks(UCanvas* InCanvas)
 {
     TRACE_CPUPROFILER_EVENT_SCOPE(Landmark_DrawLabels);
     if (!InCanvas) return;
-
+    
+    const uint64 DrawFrame = ++LandmarkTextDrawFrame;
     const ULandmarkSettings* Settings = ULandmarkSettings::Get();
     const float SettingsBaseScale = Settings ? Settings->BaseFontScale : 1.0f;
+    const float DPIScale = InCanvas->Canvas->GetDPIScale();
+    const TSharedPtr<FSlateFontCache> FontCache = FEngineFontServices::Get().GetFontCache();
     for (int32 i = 0; i < VisibleLandmarkIDs.Num(); ++i)
     {
         if (!CachedScreenPositions.IsValidIndex(i) || CachedAlphas[i] <= 0.01f) continue;
-        FLandmarkText* Text = LandmarkText.Find(VisibleLandmarkIDs[i]);
-        if (!Text) continue;
-
         const FVector2D& ScreenPos = CachedScreenPositions[i];
+        if (ScreenPos.X < 0.0 || ScreenPos.X > InCanvas->ClipX
+            || ScreenPos.Y < 0.0 || ScreenPos.Y > InCanvas->ClipY)
+        {
+            continue;
+        }
+        const FString& ID = VisibleLandmarkIDs[i];
+        FLandmarkText* Text = LandmarkText.Find(ID);
+        if (!Text)
+        {
+            const FLandmarkInstanceData* Data = RegisteredLandmarks.Find(ID);
+            if (!Data) continue;
+            Text = &LandmarkText.Add(ID);
+            PrepareLandmarkText(ID, *Data);
+        }
+        if (!Text->Name.IsSet()) continue;
+    
         const float VisualScale = CachedScales[i] * SettingsBaseScale;
         const float Alpha = CachedAlphas[i];
-        FCanvasTextItem& NameItem = Text->Name;
-        NameItem.Scale = FVector2D(VisualScale, VisualScale);
-        const FVector2D NameSizeScaled = Text->NameSize * NameItem.Scale;
+        const FVector2D NameSizeScaled = Text->NameSize * VisualScale;
         const FVector2D VPSizeScaled = Text->VictoryPointsSize * (VisualScale * 0.8f);
-        // A successful projection can still lie outside the viewport. Include
-        // both lines, pixel snapping and the shadow when rejecting their bounds.
         const double HalfWidth = FMath::Max(NameSizeScaled.X, VPSizeScaled.X) * 0.5;
         if (ScreenPos.X + HalfWidth < -2.0 || ScreenPos.X - HalfWidth > InCanvas->ClipX + 2.0
             || ScreenPos.Y < -2.0 || ScreenPos.Y - NameSizeScaled.Y - VPSizeScaled.Y > InCanvas->ClipY + 2.0)
         {
             continue;
         }
-        NameItem.SetColor(FLinearColor(1.0f, 1.0f, 1.0f, Alpha));
-
-        // Keep the original bottom-up stack and pixel snapping above the city roof.
+        Text->LastDrawFrame = DrawFrame;
         float CurrentY = ScreenPos.Y;
-        FCanvasTextItem& VPItem = Text->VictoryPoints;
-        if (!VPItem.Text.IsEmpty())
+        if (Text->VictoryPoints.IsSet())
         {
-            VPItem.Scale = FVector2D(VisualScale * 0.8f, VisualScale * 0.8f);
+            FCanvasShapedTextItem& VPItem = Text->VictoryPoints.GetValue();
+            VPItem.Scale = FVector2D(VisualScale * 0.8f * DPIScale);
             VPItem.SetColor(FLinearColor(1.0f, 0.84f, 0.0f, Alpha));
             CurrentY -= VPSizeScaled.Y;
             VPItem.Position = FVector2D(FMath::RoundToFloat(ScreenPos.X - VPSizeScaled.X * 0.5f), FMath::RoundToFloat(CurrentY));
             InCanvas->DrawItem(VPItem);
         }
-
+        FCanvasShapedTextItem& NameItem = Text->Name.GetValue();
+        NameItem.Scale = FVector2D(VisualScale * DPIScale);
+        NameItem.SetColor(FLinearColor(1.0f, 1.0f, 1.0f, Alpha));
         CurrentY -= NameSizeScaled.Y;
         NameItem.Position = FVector2D(FMath::RoundToFloat(ScreenPos.X - NameSizeScaled.X * 0.5f), FMath::RoundToFloat(CurrentY));
         InCanvas->DrawItem(NameItem);
     }
+    
+    for (auto It = LandmarkText.CreateIterator(); It; ++It)
+    {
+        if (It.Value().LastDrawFrame != DrawFrame) It.RemoveCurrent();
+    }
+    CSV_CUSTOM_STAT(LandmarkLabels, CachedLayouts, LandmarkText.Num(), ECsvCustomStatOp::Set);
+    CSV_CUSTOM_STAT(LandmarkLabels, SharedFontAtlasPages, FontCache.IsValid() ? FontCache->GetNumAtlasPages() : 0, ECsvCustomStatOp::Set);
 }
-
 bool ULandmarkSubsystem::ProjectWorldLocationToScreen(const FVector& WorldLocation, FVector2D& OutScreenPosition) const
 {
 	// Simple wrapper around UGameplayStatics
